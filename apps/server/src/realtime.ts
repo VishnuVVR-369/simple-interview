@@ -4,6 +4,7 @@ import {
   INTERVIEW_LABELS,
   buildRealtimeSessionConfig,
   type InterviewType,
+  type QuestionSettings,
 } from "@repo/ai-config/prompts";
 import type { AppConfig } from "./env";
 import { persistTranscript } from "./storage";
@@ -15,12 +16,16 @@ const persistQueues = new Map<string, Promise<void>>();
 
 export async function createRealtimeInterview(
   interviewType: InterviewType,
+  questionSettings: QuestionSettings,
   sdp: string,
   config: AppConfig,
 ): Promise<{ sdp: string; session: InterviewSession }> {
   const fd = new FormData();
   fd.set("sdp", sdp);
-  fd.set("session", JSON.stringify(buildRealtimeSessionConfig(interviewType)));
+  fd.set(
+    "session",
+    JSON.stringify(buildRealtimeSessionConfig(interviewType, questionSettings)),
+  );
 
   const response = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
@@ -45,7 +50,7 @@ export async function createRealtimeInterview(
   }
 
   const now = new Date();
-  const session = createSession(callId, interviewType, now);
+  const session = createSession(callId, interviewType, questionSettings, now);
   sessions.set(session.id, session);
   connectSideband(session, config);
 
@@ -85,6 +90,7 @@ export async function endInterviewSession(
 function createSession(
   callId: string,
   interviewType: InterviewType,
+  questionSettings: QuestionSettings,
   now: Date,
 ): InterviewSession {
   const timestamp = now.toISOString();
@@ -98,6 +104,7 @@ function createSession(
     label: INTERVIEW_LABELS[interviewType],
     model: ACTIVE_AI_CONFIG.realtimeModel,
     voice: ACTIVE_AI_CONFIG.voice,
+    question: questionSettings,
     status: "created",
     createdAt: timestamp,
     updatedAt: timestamp,

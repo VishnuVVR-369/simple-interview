@@ -1,4 +1,4 @@
-import type { InterviewType } from "@repo/ai-config/prompts";
+import type { InterviewType, QuestionSettings } from "@repo/ai-config/prompts";
 
 export type TranscriptRole = "assistant" | "user" | "system";
 
@@ -33,6 +33,7 @@ export interface InterviewSession {
   label: string;
   model: string;
   voice: string;
+  question: QuestionSettings;
   status:
     | "created"
     | "sideband_connected"
@@ -59,6 +60,7 @@ export interface PublicInterviewSession {
   label: string;
   model: string;
   voice: string;
+  question: QuestionSettings;
   status: InterviewSession["status"];
   createdAt: string;
   updatedAt: string;

@@ -23,6 +23,7 @@ export function toPublicSession(
     label: session.label,
     model: session.model,
     voice: session.voice,
+    question: session.question,
     status: session.status,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,

@@ -1,8 +1,11 @@
 "use client";
 
 import {
+  MAX_CUSTOM_QUESTION_LENGTH,
   RESPONSE_CREATE_PROMPTS,
   type InterviewType,
+  type QuestionMode,
+  type QuestionSettings,
 } from "@repo/ai-config/prompts";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
@@ -86,6 +89,11 @@ export default function Home() {
   const [status, setStatus] = useState("Checking session");
   const [activeInterview, setActiveInterview] =
     useState<InterviewOption | null>(null);
+  const [selectedInterview, setSelectedInterview] =
+    useState<InterviewOption | null>(null);
+  const [questionMode, setQuestionMode] = useState<QuestionMode>("random");
+  const [customQuestion, setCustomQuestion] = useState("");
+  const [questionError, setQuestionError] = useState("");
   const [interviewId, setInterviewId] = useState("");
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [livePartial, setLivePartial] = useState<TranscriptTurn | null>(null);
@@ -292,8 +300,51 @@ export default function Home() {
     }
   }
 
-  async function startInterview(option: InterviewOption) {
+  async function submitInterviewSetup() {
+    if (!selectedInterview) {
+      setQuestionError("Choose an interview format first.");
+      return;
+    }
+
+    const questionSettings = buildQuestionSettings();
+
+    if (!questionSettings) {
+      return;
+    }
+
+    await startInterview(selectedInterview, questionSettings);
+  }
+
+  function buildQuestionSettings(): QuestionSettings | undefined {
+    setQuestionError("");
+
+    if (questionMode === "random") {
+      return { mode: "random" };
+    }
+
+    const text = customQuestion.trim();
+
+    if (!text) {
+      setQuestionError("Add a specific question before starting.");
+      return undefined;
+    }
+
+    if (text.length > MAX_CUSTOM_QUESTION_LENGTH) {
+      setQuestionError(
+        `Keep the specific question under ${MAX_CUSTOM_QUESTION_LENGTH} characters.`,
+      );
+      return undefined;
+    }
+
+    return { mode: "specific", text };
+  }
+
+  async function startInterview(
+    option: InterviewOption,
+    questionSettings: QuestionSettings,
+  ) {
     setError("");
+    setQuestionError("");
     setStorageKeys(undefined);
     setActiveInterview(option);
     setTurns([]);
@@ -360,15 +411,12 @@ export default function Home() {
       await peer.setLocalDescription(offer);
 
       setStatus("Creating realtime session");
-      const response = await fetch(
-        apiUrl(`/api/realtime/session?type=${option.type}`),
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/sdp" },
-          body: offer.sdp ?? "",
-        },
-      );
+      const response = await fetch(apiUrl(realtimeSessionPath(option.type)), {
+        method: "POST",
+        credentials: "include",
+        headers: realtimeSessionHeaders(questionSettings),
+        body: offer.sdp ?? "",
+      });
 
       if (response.status === 401) {
         setScreen("login");
@@ -823,8 +871,13 @@ export default function Home() {
               {interviewOptions.map((option, index) => (
                 <button
                   className={styles.optionButton}
+                  data-selected={selectedInterview?.type === option.type}
                   key={option.type}
-                  onClick={() => void startInterview(option)}
+                  onClick={() => {
+                    setSelectedInterview(option);
+                    setQuestionError("");
+                  }}
+                  aria-pressed={selectedInterview?.type === option.type}
                   type="button"
                 >
                   <span className={styles.optionIndex}>
@@ -838,6 +891,70 @@ export default function Home() {
                 </button>
               ))}
             </div>
+            {selectedInterview ? (
+              <section className={styles.questionSetup}>
+                <div className={styles.questionSetupHead}>
+                  <span className={styles.fieldLabel}>Question setup</span>
+                  <h3>{selectedInterview.label}</h3>
+                </div>
+                <div className={styles.segmentedControl}>
+                  <button
+                    data-selected={questionMode === "random"}
+                    onClick={() => {
+                      setQuestionMode("random");
+                      setQuestionError("");
+                    }}
+                    type="button"
+                  >
+                    Random question
+                  </button>
+                  <button
+                    data-selected={questionMode === "specific"}
+                    onClick={() => {
+                      setQuestionMode("specific");
+                      setQuestionError("");
+                    }}
+                    type="button"
+                  >
+                    Specific question
+                  </button>
+                </div>
+                {questionMode === "specific" ? (
+                  <div className={styles.questionField}>
+                    <label className={styles.fieldLabel} htmlFor="question">
+                      Your question
+                    </label>
+                    <textarea
+                      id="question"
+                      maxLength={MAX_CUSTOM_QUESTION_LENGTH}
+                      onChange={(event) => {
+                        setCustomQuestion(event.target.value);
+                        setQuestionError("");
+                      }}
+                      placeholder="Paste the exact problem or topic you want the interviewer to ask."
+                      rows={5}
+                      value={customQuestion}
+                    />
+                    <div className={styles.questionMeta}>
+                      <span>
+                        {customQuestion.trim().length}/
+                        {MAX_CUSTOM_QUESTION_LENGTH}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+                {questionError ? (
+                  <p className={styles.validationError}>{questionError}</p>
+                ) : null}
+                <button
+                  className={styles.primaryButton}
+                  onClick={() => void submitInterviewSetup()}
+                  type="button"
+                >
+                  Start interview
+                </button>
+              </section>
+            ) : null}
             <TranscriptLibrary
               groups={markdownGroups}
               total={markdownTotal}
@@ -1361,6 +1478,31 @@ interface MarkdownBlock {
 
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
+}
+
+function realtimeSessionPath(interviewType: InterviewType): string {
+  const params = new URLSearchParams({
+    type: interviewType,
+  });
+
+  return `/api/realtime/session?${params.toString()}`;
+}
+
+function realtimeSessionHeaders(
+  questionSettings: QuestionSettings,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/sdp",
+    "X-Question-Mode": questionSettings.mode,
+  };
+
+  if (questionSettings.mode === "specific") {
+    headers["X-Custom-Question"] = encodeURIComponent(
+      questionSettings.text ?? "",
+    );
+  }
+
+  return headers;
 }
 
 function emptyMarkdownGroups(): MarkdownTranscriptGroups {

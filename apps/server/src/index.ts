@@ -1,4 +1,9 @@
-import { INTERVIEW_TYPES, type InterviewType } from "@repo/ai-config/prompts";
+import {
+  INTERVIEW_TYPES,
+  MAX_CUSTOM_QUESTION_LENGTH,
+  type InterviewType,
+  type QuestionSettings,
+} from "@repo/ai-config/prompts";
 import {
   clearSessionCookie,
   createSessionToken,
@@ -158,11 +163,24 @@ async function route(
 
   if (url.pathname === "/api/realtime/session" && request.method === "POST") {
     const interviewType = parseInterviewType(url.searchParams.get("type"));
+    const questionSettings = parseQuestionSettings(
+      url.searchParams,
+      request.headers,
+    );
 
     if (!interviewType) {
       return json(
         request,
         { error: "Invalid interview type" },
+        { status: 400 },
+        appConfig,
+      );
+    }
+
+    if ("error" in questionSettings) {
+      return json(
+        request,
+        { error: questionSettings.error },
         { status: 400 },
         appConfig,
       );
@@ -179,7 +197,12 @@ async function route(
       );
     }
 
-    const result = await createRealtimeInterview(interviewType, sdp, appConfig);
+    const result = await createRealtimeInterview(
+      interviewType,
+      questionSettings.value,
+      sdp,
+      appConfig,
+    );
 
     return withCors(
       request,
@@ -241,6 +264,48 @@ function parseInterviewType(value: string | null): InterviewType | undefined {
   return INTERVIEW_TYPES.find((type) => type === value);
 }
 
+function parseQuestionSettings(
+  searchParams: URLSearchParams,
+  headers: Headers,
+): { value: QuestionSettings; error?: undefined } | { error: string } {
+  const mode =
+    headers.get("X-Question-Mode") ??
+    searchParams.get("questionMode") ??
+    "random";
+
+  if (mode === "random") {
+    return { value: { mode: "random" } };
+  }
+
+  if (mode !== "specific") {
+    return { error: "Invalid question mode" };
+  }
+
+  const text = decodeQuestion(
+    headers.get("X-Custom-Question") ?? searchParams.get("question") ?? "",
+  ).trim();
+
+  if (!text) {
+    return { error: "Specific question is required" };
+  }
+
+  if (text.length > MAX_CUSTOM_QUESTION_LENGTH) {
+    return {
+      error: `Specific question must be ${MAX_CUSTOM_QUESTION_LENGTH} characters or fewer`,
+    };
+  }
+
+  return { value: { mode: "specific", text } };
+}
+
+function decodeQuestion(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 async function parseJsonBody<T>(request: Request): Promise<T> {
   try {
     return (await request.json()) as T;
@@ -283,7 +348,10 @@ function withCors(
   }
 
   headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  headers.set("Access-Control-Allow-Headers", "Content-Type,Accept");
+  headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type,Accept,X-Question-Mode,X-Custom-Question",
+  );
   headers.set("Access-Control-Expose-Headers", "X-Interview-Id,X-Call-Id");
 
   return new Response(response.body, {

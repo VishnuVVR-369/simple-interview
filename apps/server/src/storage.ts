@@ -258,6 +258,7 @@ function buildJsonTranscript(session: InterviewSession, persistedAt: string) {
       callId: session.callId,
       type: session.type,
       label: session.label,
+      question: session.question,
       model: session.model,
       voice: session.voice,
       status: session.status,
@@ -282,6 +283,10 @@ function buildMarkdownTranscript(
     `- Interview ID: ${session.id}`,
     `- Call ID: ${session.callId}`,
     `- Type: ${session.type}`,
+    `- Question Mode: ${session.question.mode}`,
+    session.question.mode === "specific" && session.question.text
+      ? `- Specific Question: ${session.question.text}`
+      : undefined,
     `- Model: ${session.model}`,
     `- Voice: ${session.voice}`,
     `- Status: ${session.status}`,
