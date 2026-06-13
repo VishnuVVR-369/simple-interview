@@ -15,6 +15,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@aws-sdk/client-s3": "^3.948.0",
+        "@repo/ai-config": "*",
         "ws": "^8.18.3",
       },
       "devDependencies": {
@@ -30,6 +31,7 @@
       "name": "web",
       "version": "0.1.0",
       "dependencies": {
+        "@repo/ai-config": "*",
         "@repo/ui": "*",
         "next": "16.2.0",
         "react": "^19.2.0",
@@ -41,6 +43,16 @@
         "@types/node": "^22.15.3",
         "@types/react": "19.2.2",
         "@types/react-dom": "19.2.2",
+        "eslint": "^9.39.1",
+        "typescript": "5.9.2",
+      },
+    },
+    "packages/ai-config": {
+      "name": "@repo/ai-config",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@repo/eslint-config": "*",
+        "@repo/typescript-config": "*",
         "eslint": "^9.39.1",
         "typescript": "5.9.2",
       },
@@ -246,6 +258,8 @@
     "@nodelib/fs.stat": ["@nodelib/fs.stat@2.0.5", "", {}, "sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A=="],
 
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg=="],
+
+    "@repo/ai-config": ["@repo/ai-config@workspace:packages/ai-config"],
 
     "@repo/eslint-config": ["@repo/eslint-config@workspace:packages/eslint-config"],
 

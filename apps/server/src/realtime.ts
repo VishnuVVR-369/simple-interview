@@ -1,12 +1,14 @@
 import WebSocket from "ws";
+import {
+  ACTIVE_AI_CONFIG,
+  INTERVIEW_LABELS,
+  buildRealtimeSessionConfig,
+  type InterviewType,
+} from "@repo/ai-config/prompts";
 import type { AppConfig } from "./env";
-import { INTERVIEW_LABELS, buildInterviewInstructions } from "./prompts";
 import { persistTranscript } from "./storage";
 import { ingestRealtimeEvent } from "./transcript";
-import type { InterviewSession, InterviewType } from "./types";
-
-const REALTIME_MODEL = "gpt-realtime-2";
-const REALTIME_VOICE = "marin";
+import type { InterviewSession } from "./types";
 
 const sessions = new Map<string, InterviewSession>();
 const persistQueues = new Map<string, Promise<void>>();
@@ -18,7 +20,7 @@ export async function createRealtimeInterview(
 ): Promise<{ sdp: string; session: InterviewSession }> {
   const fd = new FormData();
   fd.set("sdp", sdp);
-  fd.set("session", JSON.stringify(buildSessionConfig(interviewType)));
+  fd.set("session", JSON.stringify(buildRealtimeSessionConfig(interviewType)));
 
   const response = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
@@ -80,32 +82,6 @@ export async function endInterviewSession(
   await enqueuePersist(session, config);
 }
 
-function buildSessionConfig(interviewType: InterviewType) {
-  return {
-    type: "realtime",
-    model: REALTIME_MODEL,
-    instructions: buildInterviewInstructions(interviewType),
-    output_modalities: ["audio"],
-    audio: {
-      input: {
-        transcription: {
-          model: "gpt-realtime-whisper",
-          language: "en",
-        },
-        turn_detection: {
-          type: "semantic_vad",
-        },
-      },
-      output: {
-        voice: REALTIME_VOICE,
-      },
-    },
-    reasoning: {
-      effort: "low",
-    },
-  };
-}
-
 function createSession(
   callId: string,
   interviewType: InterviewType,
@@ -120,8 +96,8 @@ function createSession(
     callId,
     type: interviewType,
     label: INTERVIEW_LABELS[interviewType],
-    model: REALTIME_MODEL,
-    voice: REALTIME_VOICE,
+    model: ACTIVE_AI_CONFIG.realtimeModel,
+    voice: ACTIVE_AI_CONFIG.voice,
     status: "created",
     createdAt: timestamp,
     updatedAt: timestamp,

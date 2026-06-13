@@ -1,10 +1,4 @@
-export const INTERVIEW_TYPES = [
-  "dsa",
-  "system-design",
-  "machine-coding",
-] as const;
-
-export type InterviewType = (typeof INTERVIEW_TYPES)[number];
+import type { InterviewType } from "@repo/ai-config/prompts";
 
 export type TranscriptRole = "assistant" | "user" | "system";
 

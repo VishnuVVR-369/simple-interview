@@ -1,9 +1,12 @@
 "use client";
 
+import {
+  RESPONSE_CREATE_PROMPTS,
+  type InterviewType,
+} from "@repo/ai-config/prompts";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
 
-type InterviewType = "dsa" | "system-design" | "machine-coding";
 type Screen = "checking" | "login" | "home" | "starting" | "active" | "ended";
 type Role = "assistant" | "user";
 type SpeakerTarget = "interviewer" | "you";
@@ -220,8 +223,7 @@ export default function Home() {
             type: "response.create",
             response: {
               output_modalities: ["audio"],
-              instructions:
-                "Start the interview now with a short greeting and the first question.",
+              instructions: RESPONSE_CREATE_PROMPTS.startInterview,
             },
           }),
         );
@@ -418,8 +420,7 @@ export default function Home() {
           type: "response.create",
           response: {
             output_modalities: ["audio"],
-            instructions:
-              "The candidate clicked End Interview. Give concise final feedback in under one minute, then stop.",
+            instructions: RESPONSE_CREATE_PROMPTS.endInterview,
           },
         }),
       );
@@ -723,7 +724,10 @@ export default function Home() {
           <div className={styles.room}>
             <div className={styles.roomTop}>
               <div className={styles.roomTopLeft}>
-                <span className={styles.recBar} data-state={isLive ? "live" : "connecting"}>
+                <span
+                  className={styles.recBar}
+                  data-state={isLive ? "live" : "connecting"}
+                >
                   <span className={styles.recDot} />
                   {isLive ? "Live" : "Connecting"}
                   <span className={styles.recTime}>{formatTime(seconds)}</span>
@@ -810,7 +814,11 @@ export default function Home() {
                     <TranscriptLine key={turn.id} turn={turn} />
                   ))}
                   {livePartial ? (
-                    <TranscriptLine isLive key={livePartial.id} turn={livePartial} />
+                    <TranscriptLine
+                      isLive
+                      key={livePartial.id}
+                      turn={livePartial}
+                    />
                   ) : null}
                 </div>
               </div>
@@ -1023,7 +1031,12 @@ function BotIcon() {
         stroke="currentColor"
         strokeWidth="1.7"
       />
-      <path d="M12 4v4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path
+        d="M12 4v4"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
       <circle cx="9.5" cy="13.5" r="1.3" fill="currentColor" />
       <circle cx="14.5" cy="13.5" r="1.3" fill="currentColor" />
     </svg>

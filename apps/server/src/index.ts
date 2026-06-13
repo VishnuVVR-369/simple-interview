@@ -1,3 +1,4 @@
+import { INTERVIEW_TYPES, type InterviewType } from "@repo/ai-config/prompts";
 import {
   clearSessionCookie,
   createSessionToken,
@@ -14,7 +15,6 @@ import {
   getInterviewSession,
 } from "./realtime";
 import { toPublicSession } from "./transcript";
-import { INTERVIEW_TYPES, type InterviewType } from "./types";
 
 const config = loadConfig();
 

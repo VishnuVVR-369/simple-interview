@@ -21,7 +21,8 @@ const fraunces = Fraunces({
 
 export const metadata: Metadata = {
   title: "Simple Interview — Voice Practice Studio",
-  description: "A calm, voice-only studio for practicing technical interviews in real time.",
+  description:
+    "A calm, voice-only studio for practicing technical interviews in real time.",
 };
 
 export default function RootLayout({
