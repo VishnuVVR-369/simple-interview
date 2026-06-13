@@ -1,6 +1,32 @@
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import {
+  INTERVIEW_LABELS,
+  INTERVIEW_TYPES,
+  type InterviewType,
+} from "@repo/ai-config/prompts";
 import type { AppConfig } from "./env";
 import type { InterviewSession } from "./types";
+
+export interface MarkdownTranscriptListItem {
+  key: string;
+  type: InterviewType;
+  label: string;
+  date: string;
+  callId: string;
+  startedAt?: string;
+  lastModified?: string;
+  size?: number;
+}
+
+export type MarkdownTranscriptGroups = Record<
+  InterviewType,
+  MarkdownTranscriptListItem[]
+>;
 
 let client: S3Client | undefined;
 
@@ -65,6 +91,164 @@ export async function persistTranscript(
     };
     throw error;
   }
+}
+
+export async function listMarkdownTranscripts(
+  config: AppConfig,
+): Promise<{ groups: MarkdownTranscriptGroups; total: number }> {
+  const s3 = getClient(config);
+  const groups = emptyTranscriptGroups();
+  let continuationToken: string | undefined;
+  let total = 0;
+
+  do {
+    const response = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: config.r2Bucket,
+        Prefix: "transcripts/",
+        ContinuationToken: continuationToken,
+      }),
+    );
+
+    for (const object of response.Contents ?? []) {
+      const item = parseMarkdownTranscriptKey(
+        object.Key,
+        object.LastModified,
+        object.Size,
+      );
+
+      if (!item) {
+        continue;
+      }
+
+      groups[item.type].push(item);
+      total += 1;
+    }
+
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
+
+  for (const type of INTERVIEW_TYPES) {
+    groups[type].sort(compareMarkdownTranscripts);
+  }
+
+  return { groups, total };
+}
+
+export async function getMarkdownTranscript(
+  key: string,
+  config: AppConfig,
+): Promise<{ key: string; markdown: string }> {
+  if (!isSafeMarkdownTranscriptKey(key)) {
+    throw new Error("Invalid markdown transcript key");
+  }
+
+  const s3 = getClient(config);
+  const response = await s3.send(
+    new GetObjectCommand({
+      Bucket: config.r2Bucket,
+      Key: key,
+    }),
+  );
+
+  return {
+    key,
+    markdown: response.Body ? await response.Body.transformToString() : "",
+  };
+}
+
+function emptyTranscriptGroups(): MarkdownTranscriptGroups {
+  return {
+    dsa: [],
+    "system-design": [],
+    "machine-coding": [],
+  };
+}
+
+function parseMarkdownTranscriptKey(
+  key: string | undefined,
+  lastModified: Date | undefined,
+  size: number | undefined,
+): MarkdownTranscriptListItem | undefined {
+  if (!key || !isSafeMarkdownTranscriptKey(key)) {
+    return undefined;
+  }
+
+  const match = key.match(
+    /^transcripts\/([^/]+)\/(\d{4}-\d{2}-\d{2})\/(.+)\.md$/,
+  );
+
+  if (!match) {
+    return undefined;
+  }
+
+  const type = parseInterviewType(match[1]);
+
+  if (!type) {
+    return undefined;
+  }
+
+  const filename = match[3] ?? "";
+  const startedAt = parseStartedAt(filename);
+
+  return {
+    key,
+    type,
+    label: INTERVIEW_LABELS[type],
+    date: match[2] ?? "",
+    callId: parseCallId(filename),
+    startedAt,
+    lastModified: lastModified?.toISOString(),
+    size,
+  };
+}
+
+function isSafeMarkdownTranscriptKey(key: string): boolean {
+  return (
+    key.startsWith("transcripts/") &&
+    key.endsWith(".md") &&
+    !key.includes("..") &&
+    !key.includes("\\")
+  );
+}
+
+function parseInterviewType(
+  value: string | undefined,
+): InterviewType | undefined {
+  return INTERVIEW_TYPES.find((type) => type === value);
+}
+
+function parseStartedAt(filename: string): string | undefined {
+  const match = filename.match(
+    /^(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-/,
+  );
+
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  return match[1].replace(
+    /^(.+T)(\d{2})-(\d{2})-(\d{2})-(\d{3}Z)$/,
+    "$1$2:$3:$4.$5",
+  );
+}
+
+function parseCallId(filename: string): string {
+  const match = filename.match(
+    /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(.+)$/,
+  );
+
+  return match?.[1] ?? filename;
+}
+
+function compareMarkdownTranscripts(
+  a: MarkdownTranscriptListItem,
+  b: MarkdownTranscriptListItem,
+): number {
+  const aTime = a.startedAt ?? a.lastModified ?? "";
+  const bTime = b.startedAt ?? b.lastModified ?? "";
+
+  return bTime.localeCompare(aTime);
 }
 
 function buildJsonTranscript(session: InterviewSession, persistedAt: string) {

@@ -7,7 +7,8 @@
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
-    "start": "bun --env-file=.env turbo run start"
+    "start": "bun --env-file=.env turbo run start",
+    "all": "bun run lint && bun run format && bun run check-types && bun run build"
   },
   "devDependencies": {
     "prettier": "^3.7.4",

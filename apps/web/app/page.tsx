@@ -31,6 +31,29 @@ interface EndResponse {
   };
 }
 
+interface MarkdownTranscriptItem {
+  key: string;
+  type: InterviewType;
+  label: string;
+  date: string;
+  callId: string;
+  startedAt?: string;
+  lastModified?: string;
+  size?: number;
+}
+
+type MarkdownTranscriptGroups = Record<InterviewType, MarkdownTranscriptItem[]>;
+
+interface MarkdownTranscriptListResponse {
+  groups?: Partial<MarkdownTranscriptGroups>;
+  total?: number;
+}
+
+interface MarkdownTranscriptResponse {
+  key: string;
+  markdown: string;
+}
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   "http://localhost:8787";
@@ -70,6 +93,15 @@ export default function Home() {
   const [isEnding, setIsEnding] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [storageKeys, setStorageKeys] = useState<EndResponse["storage"]>();
+  const [markdownGroups, setMarkdownGroups] =
+    useState<MarkdownTranscriptGroups>(() => emptyMarkdownGroups());
+  const [markdownTotal, setMarkdownTotal] = useState(0);
+  const [selectedMarkdownItem, setSelectedMarkdownItem] =
+    useState<MarkdownTranscriptItem | null>(null);
+  const [selectedMarkdown, setSelectedMarkdown] = useState("");
+  const [isLoadingMarkdownList, setIsLoadingMarkdownList] = useState(false);
+  const [isLoadingMarkdown, setIsLoadingMarkdown] = useState(false);
+  const [markdownError, setMarkdownError] = useState("");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -129,8 +161,14 @@ export default function Home() {
       });
       const data = (await response.json()) as { authenticated?: boolean };
 
-      setScreen(data.authenticated ? "home" : "login");
-      setStatus(data.authenticated ? "Ready when you are" : "Login required");
+      if (data.authenticated) {
+        setScreen("home");
+        setStatus("Ready when you are");
+        void loadMarkdownTranscripts();
+      } else {
+        setScreen("login");
+        setStatus("Login required");
+      }
     } catch {
       setScreen("login");
       setStatus("Server unavailable");
@@ -158,6 +196,7 @@ export default function Home() {
     setPassword("");
     setScreen("home");
     setStatus("Ready when you are");
+    void loadMarkdownTranscripts();
   }
 
   async function logout() {
@@ -169,6 +208,88 @@ export default function Home() {
     resetInterviewState();
     setScreen("login");
     setStatus("Login required");
+  }
+
+  async function loadMarkdownTranscripts() {
+    setIsLoadingMarkdownList(true);
+    setMarkdownError("");
+
+    try {
+      const response = await fetch(apiUrl("/api/transcripts/markdown"), {
+        credentials: "include",
+      });
+
+      if (response.status === 401) {
+        setScreen("login");
+        setStatus("Login required");
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error("Failed to load saved transcripts");
+      }
+
+      const data = (await response.json()) as MarkdownTranscriptListResponse;
+      const groups = normalizeMarkdownGroups(data.groups);
+      const allItems = flattenMarkdownGroups(groups);
+      const currentItem = allItems.find(
+        (item) => item.key === selectedMarkdownItem?.key,
+      );
+      const nextItem = currentItem ?? allItems[0] ?? null;
+
+      setMarkdownGroups(groups);
+      setMarkdownTotal(data.total ?? allItems.length);
+
+      if (nextItem) {
+        void openMarkdownTranscript(nextItem);
+      } else {
+        setSelectedMarkdownItem(null);
+        setSelectedMarkdown("");
+      }
+    } catch (loadError) {
+      setMarkdownError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load saved transcripts",
+      );
+    } finally {
+      setIsLoadingMarkdownList(false);
+    }
+  }
+
+  async function openMarkdownTranscript(item: MarkdownTranscriptItem) {
+    setSelectedMarkdownItem(item);
+    setSelectedMarkdown("");
+    setIsLoadingMarkdown(true);
+    setMarkdownError("");
+
+    try {
+      const response = await fetch(
+        apiUrl(`/api/transcripts/markdown?key=${encodeURIComponent(item.key)}`),
+        { credentials: "include" },
+      );
+
+      if (response.status === 401) {
+        setScreen("login");
+        setStatus("Login required");
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error("Failed to load markdown transcript");
+      }
+
+      const data = (await response.json()) as MarkdownTranscriptResponse;
+      setSelectedMarkdown(data.markdown);
+    } catch (loadError) {
+      setMarkdownError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load markdown transcript",
+      );
+    } finally {
+      setIsLoadingMarkdown(false);
+    }
   }
 
   async function startInterview(option: InterviewOption) {
@@ -717,6 +838,17 @@ export default function Home() {
                 </button>
               ))}
             </div>
+            <TranscriptLibrary
+              groups={markdownGroups}
+              total={markdownTotal}
+              selectedItem={selectedMarkdownItem}
+              markdown={selectedMarkdown}
+              error={markdownError}
+              isLoadingList={isLoadingMarkdownList}
+              isLoadingMarkdown={isLoadingMarkdown}
+              onRefresh={() => void loadMarkdownTranscripts()}
+              onSelect={(item) => void openMarkdownTranscript(item)}
+            />
           </>
         ) : null}
 
@@ -894,6 +1026,7 @@ export default function Home() {
                 resetInterviewState();
                 setScreen("home");
                 setStatus("Ready when you are");
+                void loadMarkdownTranscripts();
               }}
               type="button"
             >
@@ -933,6 +1066,167 @@ function TranscriptLine({
         {turn.text}
         {isLive ? <span className={styles.caret} /> : null}
       </p>
+    </article>
+  );
+}
+
+function TranscriptLibrary({
+  groups,
+  total,
+  selectedItem,
+  markdown,
+  error,
+  isLoadingList,
+  isLoadingMarkdown,
+  onRefresh,
+  onSelect,
+}: {
+  groups: MarkdownTranscriptGroups;
+  total: number;
+  selectedItem: MarkdownTranscriptItem | null;
+  markdown: string;
+  error: string;
+  isLoadingList: boolean;
+  isLoadingMarkdown: boolean;
+  onRefresh: () => void;
+  onSelect: (item: MarkdownTranscriptItem) => void;
+}) {
+  const hasTranscripts = total > 0;
+
+  return (
+    <section className={styles.library}>
+      <div className={styles.libraryHead}>
+        <div>
+          <p className={styles.eyebrow}>Saved Markdown</p>
+          <h2>Previous interviews</h2>
+        </div>
+        <button
+          className={styles.libraryRefresh}
+          disabled={isLoadingList}
+          onClick={onRefresh}
+          type="button"
+        >
+          {isLoadingList ? "Refreshing" : "Refresh"}
+        </button>
+      </div>
+
+      {error ? <p className={styles.error}>{error}</p> : null}
+
+      {!hasTranscripts && !isLoadingList ? (
+        <p className={styles.libraryEmpty}>
+          No Markdown transcripts found in R2 yet.
+        </p>
+      ) : null}
+
+      {hasTranscripts ? (
+        <div className={styles.libraryGrid}>
+          <div className={styles.libraryList}>
+            {interviewOptions.map((option) => {
+              const items = groups[option.type];
+
+              return (
+                <section className={styles.libraryGroup} key={option.type}>
+                  <div className={styles.libraryGroupHead}>
+                    <h3>{option.label}</h3>
+                    <span>{items.length}</span>
+                  </div>
+                  {items.length === 0 ? (
+                    <p className={styles.libraryGroupEmpty}>
+                      No saved Markdown files.
+                    </p>
+                  ) : null}
+                  {items.map((item) => (
+                    <button
+                      className={styles.transcriptFile}
+                      data-selected={selectedItem?.key === item.key}
+                      key={item.key}
+                      onClick={() => onSelect(item)}
+                      type="button"
+                    >
+                      <span className={styles.transcriptFileTitle}>
+                        {formatTranscriptTitle(item)}
+                      </span>
+                      <span className={styles.transcriptFileMeta}>
+                        {formatDateTime(
+                          item.startedAt ?? item.lastModified ?? item.date,
+                        )}
+                        {item.size ? ` | ${formatBytes(item.size)}` : ""}
+                      </span>
+                      <span className={styles.transcriptFileKey}>
+                        {item.key}
+                      </span>
+                    </button>
+                  ))}
+                </section>
+              );
+            })}
+          </div>
+
+          <div className={styles.markdownPane}>
+            {selectedItem ? (
+              <div className={styles.markdownPaneHead}>
+                <div>
+                  <p className={styles.markdownFileName}>
+                    {fileNameFromKey(selectedItem.key)}
+                  </p>
+                  <p className={styles.markdownFileKey}>{selectedItem.key}</p>
+                </div>
+              </div>
+            ) : null}
+
+            {isLoadingMarkdown ? (
+              <div className={styles.markdownLoading}>
+                <span className={styles.spinner} />
+                Loading Markdown transcript
+              </div>
+            ) : null}
+
+            {!isLoadingMarkdown && markdown ? (
+              <MarkdownReader markdown={markdown} />
+            ) : null}
+
+            {!isLoadingMarkdown && !markdown ? (
+              <p className={styles.libraryEmpty}>
+                Select a Markdown file to read the transcript.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function MarkdownReader({ markdown }: { markdown: string }) {
+  return (
+    <article className={styles.markdownReader}>
+      {parseMarkdownBlocks(markdown).map((block, index) => {
+        const key = `${block.type}-${index}`;
+
+        if (block.type === "h1") {
+          return <h1 key={key}>{block.text}</h1>;
+        }
+
+        if (block.type === "h2") {
+          return <h2 key={key}>{block.text}</h2>;
+        }
+
+        if (block.type === "h3") {
+          return <h3 key={key}>{block.text}</h3>;
+        }
+
+        if (block.type === "ul") {
+          return (
+            <ul key={key}>
+              {block.items.map((item, itemIndex) => (
+                <li key={`${key}-${itemIndex}`}>{stripMarkdown(item)}</li>
+              ))}
+            </ul>
+          );
+        }
+
+        return <p key={key}>{stripMarkdown(block.text)}</p>;
+      })}
     </article>
   );
 }
@@ -1059,8 +1353,153 @@ function CheckIcon() {
 
 /* ----------------------------- Helpers ----------------------------- */
 
+interface MarkdownBlock {
+  type: "h1" | "h2" | "h3" | "p" | "ul";
+  text: string;
+  items: string[];
+}
+
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
+}
+
+function emptyMarkdownGroups(): MarkdownTranscriptGroups {
+  return {
+    dsa: [],
+    "system-design": [],
+    "machine-coding": [],
+  };
+}
+
+function normalizeMarkdownGroups(
+  groups: Partial<MarkdownTranscriptGroups> | undefined,
+): MarkdownTranscriptGroups {
+  const normalized = emptyMarkdownGroups();
+
+  for (const option of interviewOptions) {
+    normalized[option.type] = groups?.[option.type] ?? [];
+  }
+
+  return normalized;
+}
+
+function flattenMarkdownGroups(
+  groups: MarkdownTranscriptGroups,
+): MarkdownTranscriptItem[] {
+  return interviewOptions.flatMap((option) => groups[option.type]);
+}
+
+function formatTranscriptTitle(item: MarkdownTranscriptItem): string {
+  return `${item.label} | ${shortId(item.callId)}`;
+}
+
+function formatDateTime(value: string): string {
+  if (!value) {
+    return "Unknown date";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: value.includes("T") ? "short" : undefined,
+  }).format(date);
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+
+  const kb = size / 1024;
+
+  if (kb < 1024) {
+    return `${kb.toFixed(1)} KB`;
+  }
+
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+function fileNameFromKey(key: string): string {
+  return key.split("/").pop() ?? key;
+}
+
+function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+
+  function flushParagraph() {
+    if (paragraph.length === 0) {
+      return;
+    }
+
+    blocks.push({
+      type: "p",
+      text: paragraph.join(" "),
+      items: [],
+    });
+    paragraph = [];
+  }
+
+  function flushList() {
+    if (list.length === 0) {
+      return;
+    }
+
+    blocks.push({
+      type: "ul",
+      text: "",
+      items: list,
+    });
+    list = [];
+  }
+
+  function flushText() {
+    flushParagraph();
+    flushList();
+  }
+
+  for (const line of markdown.split(/\r?\n/)) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      flushText();
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+
+    if (heading?.[1] && heading[2]) {
+      flushText();
+      blocks.push({
+        type: `h${heading[1].length}` as MarkdownBlock["type"],
+        text: stripMarkdown(heading[2]),
+        items: [],
+      });
+      continue;
+    }
+
+    if (trimmed.startsWith("- ")) {
+      flushParagraph();
+      list.push(trimmed.slice(2));
+      continue;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  }
+
+  flushText();
+  return blocks;
+}
+
+function stripMarkdown(value: string): string {
+  return value.replace(/^_(.*)_$/, "$1").trim();
 }
 
 function formatTime(total: number): string {

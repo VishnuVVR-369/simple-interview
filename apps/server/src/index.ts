@@ -14,6 +14,7 @@ import {
   endInterviewSession,
   getInterviewSession,
 } from "./realtime";
+import { getMarkdownTranscript, listMarkdownTranscripts } from "./storage";
 import { toPublicSession } from "./transcript";
 
 const config = loadConfig();
@@ -114,6 +115,45 @@ async function route(
 
   if (!isAuthenticated(request)) {
     return json(request, { error: "Unauthorized" }, { status: 401 }, appConfig);
+  }
+
+  if (
+    url.pathname === "/api/transcripts/markdown" &&
+    request.method === "GET"
+  ) {
+    const key = url.searchParams.get("key");
+
+    if (key) {
+      try {
+        return json(
+          request,
+          await getMarkdownTranscript(key, appConfig),
+          undefined,
+          appConfig,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "Invalid markdown transcript key"
+        ) {
+          return json(
+            request,
+            { error: error.message },
+            { status: 400 },
+            appConfig,
+          );
+        }
+
+        throw error;
+      }
+    }
+
+    return json(
+      request,
+      await listMarkdownTranscripts(appConfig),
+      undefined,
+      appConfig,
+    );
   }
 
   if (url.pathname === "/api/realtime/session" && request.method === "POST") {
