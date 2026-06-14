@@ -7,6 +7,7 @@ import {
   type QuestionSettings,
 } from "@repo/ai-config/prompts";
 import type { AppConfig } from "./env";
+import { generateEvaluation } from "./evaluation";
 import { persistTranscript } from "./storage";
 import { ingestRealtimeEvent } from "./transcript";
 import type { InterviewSession } from "./types";
@@ -85,6 +86,11 @@ export async function endInterviewSession(
   }
 
   await enqueuePersist(session, config);
+  session.evaluation = await generateEvaluation(session, config);
+
+  if (session.evaluation) {
+    await enqueuePersist(session, config);
+  }
 }
 
 function createSession(

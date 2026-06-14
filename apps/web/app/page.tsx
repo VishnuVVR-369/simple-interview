@@ -26,12 +26,34 @@ interface TranscriptTurn {
   text: string;
 }
 
+interface RubricAxis {
+  key: string;
+  label: string;
+  score: number;
+  comment: string;
+}
+
+interface InterviewEvaluation {
+  overallScore: number;
+  recommendation: "strong_no" | "lean_no" | "lean_yes" | "strong_yes";
+  summary: string;
+  axes: RubricAxis[];
+  strengths: string[];
+  improvements: string[];
+  modelAnswerOutline: string;
+  topicsToReview: string[];
+  generatedAt: string;
+  evalModel: string;
+}
+
 interface EndResponse {
   storage?: {
     jsonKey?: string;
     markdownKey?: string;
+    evaluationKey?: string;
     lastError?: string;
   };
+  evaluation?: InterviewEvaluation;
 }
 
 interface MarkdownTranscriptItem {
@@ -101,6 +123,7 @@ export default function Home() {
   const [isEnding, setIsEnding] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [storageKeys, setStorageKeys] = useState<EndResponse["storage"]>();
+  const [evaluation, setEvaluation] = useState<InterviewEvaluation>();
   const [markdownGroups, setMarkdownGroups] =
     useState<MarkdownTranscriptGroups>(() => emptyMarkdownGroups());
   const [markdownTotal, setMarkdownTotal] = useState(0);
@@ -346,6 +369,7 @@ export default function Home() {
     setError("");
     setQuestionError("");
     setStorageKeys(undefined);
+    setEvaluation(undefined);
     setActiveInterview(option);
     setTurns([]);
     setLivePartial(null);
@@ -615,7 +639,7 @@ export default function Home() {
       endTimerRef.current = undefined;
     }
 
-    setStatus("Saving transcript");
+    setStatus("Grading your interview");
     cleanupCall();
 
     const id = interviewIdRef.current;
@@ -628,6 +652,7 @@ export default function Home() {
         });
         const data = (await response.json()) as EndResponse;
         setStorageKeys(data.storage);
+        setEvaluation(data.evaluation);
       } catch {
         setError("Call ended, but transcript finalization failed.");
       }
@@ -664,6 +689,7 @@ export default function Home() {
     setTurns([]);
     setLivePartial(null);
     setStorageKeys(undefined);
+    setEvaluation(undefined);
     setIsMuted(false);
     setIsEnding(false);
     setSeconds(0);
@@ -1120,6 +1146,13 @@ export default function Home() {
                 <span className={styles.statLabel}>Duration</span>
               </div>
             </div>
+            {evaluation ? (
+              <EvaluationPanel evaluation={evaluation} />
+            ) : (
+              <p className={styles.evaluationEmpty}>
+                Not enough transcript was captured for a structured evaluation.
+              </p>
+            )}
             {storageKeys?.jsonKey ? (
               <div className={styles.receipt}>
                 <div>
@@ -1130,6 +1163,12 @@ export default function Home() {
                   <span>Markdown transcript</span>
                   <p>{storageKeys.markdownKey}</p>
                 </div>
+                {storageKeys.evaluationKey ? (
+                  <div>
+                    <span>Evaluation JSON</span>
+                    <p>{storageKeys.evaluationKey}</p>
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {storageKeys?.lastError ? (
@@ -1157,6 +1196,79 @@ export default function Home() {
         </audio>
       </section>
     </main>
+  );
+}
+
+function EvaluationPanel({ evaluation }: { evaluation: InterviewEvaluation }) {
+  return (
+    <section className={styles.evaluationPanel}>
+      <div className={styles.evaluationTop}>
+        <div>
+          <span className={styles.evaluationScore}>
+            {evaluation.overallScore}
+          </span>
+          <span className={styles.evaluationScoreMax}>/100</span>
+        </div>
+        <span
+          className={styles.recommendationBadge}
+          data-recommendation={evaluation.recommendation}
+        >
+          {formatRecommendation(evaluation.recommendation)}
+        </span>
+      </div>
+
+      <p className={styles.evaluationSummary}>{evaluation.summary}</p>
+
+      <div className={styles.axisList}>
+        {evaluation.axes.map((axis) => (
+          <div className={styles.axisRow} key={axis.key}>
+            <div className={styles.axisHead}>
+              <span>{axis.label}</span>
+              <span>{axis.score}/5</span>
+            </div>
+            <div className={styles.axisTrack} aria-hidden>
+              <span
+                style={{
+                  width: `${Math.max(0, Math.min(100, (axis.score / 5) * 100))}%`,
+                }}
+              />
+            </div>
+            <p>{axis.comment}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className={styles.evaluationColumns}>
+        <EvaluationList title="Strengths" items={evaluation.strengths} />
+        <EvaluationList title="Improvements" items={evaluation.improvements} />
+      </div>
+
+      <div className={styles.modelAnswer}>
+        <span>Model answer outline</span>
+        <p>{evaluation.modelAnswerOutline}</p>
+      </div>
+
+      {evaluation.topicsToReview.length > 0 ? (
+        <div className={styles.topicList}>
+          {evaluation.topicsToReview.map((topic) => (
+            <span key={topic}>{topic}</span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function EvaluationList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className={styles.evaluationList}>
+      <span>{title}</span>
+      <ul>
+        {items.map((item, index) => (
+          <li key={`${title}-${index}`}>{item}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -1648,6 +1760,13 @@ function formatTime(total: number): string {
   const minutes = Math.floor(total / 60);
   const secs = total % 60;
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function formatRecommendation(recommendation: string): string {
+  return recommendation
+    .split("_")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function shortId(id: string): string {

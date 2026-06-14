@@ -30,6 +30,7 @@ export function toPublicSession(
     endedAt: session.endedAt,
     turns: session.turns,
     storage: session.storage,
+    evaluation: session.evaluation,
   };
 }
 

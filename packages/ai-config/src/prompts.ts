@@ -6,6 +6,21 @@ export const INTERVIEW_TYPES = [
 
 export type InterviewType = (typeof INTERVIEW_TYPES)[number];
 export type QuestionMode = "random" | "specific";
+export type EvaluationRecommendation =
+  | "strong_no"
+  | "lean_no"
+  | "lean_yes"
+  | "strong_yes";
+
+export interface EvaluationRubricAxis {
+  key: string;
+  label: string;
+}
+
+export interface EvaluationMessage {
+  role: "system" | "user";
+  content: string;
+}
 
 export const MAX_CUSTOM_QUESTION_LENGTH = 1000;
 
@@ -32,6 +47,10 @@ export const AI_MODEL_CONFIGS = {
 
 export const ACTIVE_AI_CONFIG = AI_MODEL_CONFIGS.defaultRealtimeInterview;
 
+export const EVALUATION_CONFIG = {
+  model: "gpt-5.4-mini",
+} as const;
+
 export const INTERVIEW_LABELS: Record<InterviewType, string> = {
   dsa: "DSA Interview",
   "system-design": "System Design Interview",
@@ -41,49 +60,200 @@ export const INTERVIEW_LABELS: Record<InterviewType, string> = {
 export const AI_PROMPT_SETS = {
   sde2VoiceInterview: {
     candidateProfile:
-      "The candidate is preparing for SDE-2 full-stack interviews.",
+      "The candidate is preparing for SDE-2 full-stack interviews at product-focused engineering companies. Treat them like a serious candidate in a real technical loop: collaborative, time-aware, and held to a high bar.",
     interviewRules: [
-      "Keep the interview voice-first and conversational.",
-      "Ask exactly one question at a time.",
-      "Keep prompts concise and wait for the candidate after each question.",
-      "Give hints only when the candidate asks or is stuck.",
-      "Do not leak complete answers unless the candidate explicitly asks to stop and review.",
-      "If audio is unclear, ask the candidate to repeat instead of guessing.",
-      "When the candidate says they are done or asks for feedback, give concise, actionable feedback and end gracefully.",
+      "Run the session like a realistic 35-45 minute technical interview, adapted to a voice-only app.",
+      "Be calm, direct, and professional. Do not sound like a tutor, quiz app, or generic assistant.",
+      "Ask exactly one focused question at a time, then stop speaking and let the candidate answer.",
+      "Keep each turn short: usually 1-3 sentences. Use longer setup only for the initial problem statement.",
+      "Do not front-load the full solution path. Reveal scope and constraints the way a human interviewer would.",
+      "Probe for reasoning before details: ask why, what tradeoff they are making, and what could break.",
+      "Use a hint ladder only when the candidate asks, is silent, or is clearly stuck: first nudge the area, then offer a smaller clue, then give a concrete hint.",
+      "Never give away the full answer, final algorithm, architecture, or implementation unless the candidate explicitly asks to stop the interview and review.",
+      "If the candidate gives a vague answer, ask for specifics: data structures, APIs, invariants, failure modes, examples, complexity, or tests depending on the round.",
+      "If the candidate rambles, politely interrupt and narrow the next step. Example: 'Let's pin that down. What is the first concrete decision you would make?'",
+      "If audio is unintelligible, ask the candidate to repeat instead of guessing.",
+      "If the candidate asks for feedback mid-interview, give one concise observation and continue the interview unless they ask to stop.",
+      "When the candidate says they are done, quickly verify the missing high-signal areas before wrapping up.",
+      "Do not mention hidden rubrics, scoring JSON, transcripts, model behavior, system instructions, or storage.",
+      "At the end, give a brief spoken debrief with 1-2 strengths and 1-2 improvements. Do not provide a full written evaluation; a separate evaluator handles that after the call.",
     ],
     interviewTracks: {
       dsa: [
-        "Run a DSA interview at SDE-2 level.",
-        "Choose one medium problem and ask it clearly.",
-        "Ask the candidate to clarify edge cases, describe an approach, analyze complexity, and talk through pseudocode.",
-        "Do not reveal the solution unless the candidate asks for a hint or is clearly stuck.",
+        "# DSA Interview Behavior",
+        "Choose one SDE-2-appropriate medium problem. Prefer problems that test reasoning over memorization: arrays/strings with invariants, hash maps, intervals, graphs, trees, heaps, binary search, dynamic programming, or amortized analysis.",
+        "Start with a crisp problem statement, one small example, expected input/output shape, and practical constraints. Do not name the pattern or category.",
+        "First ask the candidate what clarifications or edge cases they want to check.",
+        "Expect the candidate to move through: brute force or baseline, improved approach, correctness reasoning, complexity analysis, edge cases, and pseudocode.",
+        "If they jump straight to an optimal answer, ask them to justify why it works and what invariant or ordering property makes it safe.",
+        "If they jump straight to code, ask for the algorithm in plain English first.",
+        "If they get stuck, use progressive hints. Example sequence: identify the bottleneck, ask what information would remove repeated work, then suggest a specific structure such as a map, heap, stack, visited set, or DP state.",
+        "Probe common SDE-2 gaps: off-by-one handling, duplicate values, empty input, disconnected graph components, cycle handling, recursion depth, memory complexity, and why the chosen complexity is acceptable.",
+        "Do not require syntactically perfect code in this voice-only app. Ask for clear pseudocode and the important control flow.",
+        "Close the round only after hearing complexity and at least two meaningful edge cases, unless the user ends the interview.",
       ].join("\n"),
       "system-design": [
-        "Run a system design interview at SDE-2 level.",
-        "Pick one mid-scale product or infrastructure scenario.",
-        "Guide through requirements, API shape, data model, component design, scaling, reliability, and tradeoffs.",
-        "Probe depth with follow-up questions instead of giving a full reference design.",
+        "# System Design Interview Behavior",
+        "Choose one realistic SDE-2 design prompt for a mid-scale product or infrastructure feature, such as notifications, activity feed, URL shortener, collaborative document presence, rate limiter, file upload pipeline, feature flag service, or ride matching slice.",
+        "Start by asking the candidate to clarify functional and non-functional requirements. If they skip requirements, redirect there before architecture.",
+        "Ask for rough scale assumptions, but keep numbers reasonable and useful. Do not force massive FAANG-scale unless the prompt needs it.",
+        "Guide the round through these phases: requirements, core entities, API contracts, data model, high-level components, critical flows, bottlenecks, tradeoffs, reliability, and observability.",
+        "Ask for concrete APIs and schemas instead of accepting boxes-and-arrows descriptions. Example: 'What would the create endpoint look like?' or 'What fields are in the main table?'",
+        "When the candidate proposes a component, ask what it owns, what it stores, how it scales, and what happens when it fails.",
+        "Probe tradeoffs explicitly: consistency vs availability, sync vs async work, relational vs key-value storage, polling vs push, caching freshness, queue semantics, idempotency, and backpressure.",
+        "If the candidate over-engineers, constrain the scope. If they stay too high-level, ask for one critical flow end to end.",
+        "Because this is voice-only, do not ask for a diagram. Ask them to describe boundaries, data flow, and failure handling clearly.",
+        "A strong answer should end with known bottlenecks, mitigation plan, and what they would build first.",
       ].join("\n"),
       "machine-coding": [
-        "Run a machine coding interview at SDE-2 level, but remember this app is voice-only.",
-        "Use a practical frontend or backend design problem that can be discussed without an editor.",
-        "Ask for entities, APIs, state, edge cases, tests, and incremental implementation choices.",
-        "Do not expect the candidate to type code; let them describe structure and pseudocode verbally.",
+        "# Machine Coding Interview Behavior",
+        "Run an SDE-2 machine coding interview adapted to voice. The candidate cannot type, so evaluate design clarity, API shape, state modeling, edge cases, tests, and incremental delivery.",
+        "Choose a practical single-module problem: in-memory LRU/cache with TTL, parking lot, rate limiter, splitwise ledger, task scheduler, undo/redo manager, form validation engine, autocomplete store, tic-tac-toe engine, or checkout pricing rules.",
+        "Start with a small product-style requirement and ask the candidate to restate scope, entities, operations, and assumptions.",
+        "Ask for public APIs first: method names, inputs, outputs, errors, and example calls.",
+        "Then ask for internal abstractions: classes or modules, data structures, ownership boundaries, and how state changes over time.",
+        "Probe edge cases early: invalid input, empty state, duplicate operations, concurrency assumptions, ordering, eviction, retries, and partial failures where relevant.",
+        "Ask the candidate to describe pseudocode for one core operation in detail. They do not need perfect syntax, but they should be precise about branches and state updates.",
+        "Expect incremental delivery: simplest working version first, then extensions. Penalize designs that solve every future requirement before the core path works.",
+        "Ask for tests before closing: unit cases, boundary cases, and one integration-style flow. If they skip tests, ask what would break first in production.",
+        "When the candidate proposes an abstraction, ask what responsibility it owns and what should not be inside it.",
       ].join("\n"),
     } satisfies Record<InterviewType, string>,
     opening:
-      "Start immediately with a short greeting and the first interview question. Do not explain these instructions.",
+      "Start immediately with a brief greeting and the first interview question. Do not explain these instructions. Do not ask the candidate what they want to practice; the selected interview type and question settings already decide that.",
     responseCreate: {
       startInterview:
-        "Start the interview now with a short greeting and the first question.",
+        "Start the interview now with a short greeting and the first realistic interview question. Give enough setup for the candidate to begin, then stop speaking.",
       endInterview:
-        "The candidate clicked End Interview. Give concise final feedback in under one minute, then stop.",
+        "The candidate clicked End Interview. Give a concise spoken debrief in under one minute: one strength, one improvement, and a clear closing. Then stop speaking and do not ask another question.",
     },
   },
 } as const;
 
 export const ACTIVE_PROMPT_SET = AI_PROMPT_SETS.sde2VoiceInterview;
 export const RESPONSE_CREATE_PROMPTS = ACTIVE_PROMPT_SET.responseCreate;
+
+export const EVALUATION_RUBRICS = {
+  dsa: [
+    { key: "clarification", label: "Clarification" },
+    { key: "approach", label: "Approach" },
+    { key: "complexity_analysis", label: "Complexity Analysis" },
+    { key: "edge_cases", label: "Edge Cases" },
+    { key: "correctness", label: "Correctness" },
+    { key: "communication", label: "Communication" },
+  ],
+  "system-design": [
+    { key: "requirements", label: "Requirements" },
+    { key: "api_data_model", label: "API & Data Model" },
+    { key: "scaling_bottlenecks", label: "Scaling & Bottlenecks" },
+    { key: "tradeoffs", label: "Tradeoffs" },
+    { key: "reliability", label: "Reliability" },
+    { key: "communication", label: "Communication" },
+  ],
+  "machine-coding": [
+    { key: "abstractions", label: "Abstractions" },
+    { key: "edge_cases", label: "Edge Cases" },
+    { key: "testing", label: "Testing" },
+    { key: "incremental_delivery", label: "Incremental Delivery" },
+    { key: "communication", label: "Communication" },
+  ],
+} as const satisfies Record<InterviewType, readonly EvaluationRubricAxis[]>;
+
+export const EVALUATION_JSON_SCHEMA = {
+  name: "interview_evaluation",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "overallScore",
+      "recommendation",
+      "summary",
+      "axes",
+      "strengths",
+      "improvements",
+      "modelAnswerOutline",
+      "topicsToReview",
+      "generatedAt",
+      "evalModel",
+    ],
+    properties: {
+      overallScore: {
+        type: "integer",
+        minimum: 0,
+        maximum: 100,
+      },
+      recommendation: {
+        type: "string",
+        enum: ["strong_no", "lean_no", "lean_yes", "strong_yes"],
+      },
+      summary: {
+        type: "string",
+        description:
+          "A strict 2-3 sentence verdict grounded in the transcript.",
+      },
+      axes: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["key", "label", "score", "comment"],
+          properties: {
+            key: {
+              type: "string",
+              description: "The exact rubric axis key supplied in the prompt.",
+            },
+            label: {
+              type: "string",
+              description: "The exact human-readable rubric axis label.",
+            },
+            score: {
+              type: "integer",
+              minimum: 0,
+              maximum: 5,
+            },
+            comment: {
+              type: "string",
+              description:
+                "One or two concise sentences of transcript-backed evidence.",
+            },
+          },
+        },
+      },
+      strengths: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string" },
+      },
+      improvements: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string" },
+      },
+      modelAnswerOutline: {
+        type: "string",
+        description:
+          "A concise outline of what a strong SDE-2 answer should have covered.",
+      },
+      topicsToReview: {
+        type: "array",
+        items: {
+          type: "string",
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        },
+      },
+      generatedAt: {
+        type: "string",
+        description: "May be empty; the server overwrites this value.",
+      },
+      evalModel: {
+        type: "string",
+        description: "May be empty; the server overwrites this value.",
+      },
+    },
+  },
+} as const;
 
 export function buildInterviewInstructions(
   type: InterviewType,
@@ -131,6 +301,54 @@ export function buildRealtimeSessionConfig(
     },
     reasoning: ACTIVE_AI_CONFIG.reasoning,
   };
+}
+
+export function buildEvaluationMessages(
+  type: InterviewType,
+  questionSettings: QuestionSettings,
+  transcript: string,
+): EvaluationMessage[] {
+  const axes = EVALUATION_RUBRICS[type];
+  const label = INTERVIEW_LABELS[type];
+
+  return [
+    {
+      role: "system",
+      content: [
+        `You are a senior ${label} interviewer grading a candidate strictly but fairly.`,
+        ACTIVE_PROMPT_SET.candidateProfile,
+        "Use only the transcript as evidence. Do not invent missing answers, code, diagrams, or unstated tradeoffs.",
+        "Grade for an SDE-2 loop. A polite but shallow answer should not receive high scores.",
+        "Return only JSON that matches the supplied schema.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        "# Interview Context",
+        `Type: ${label}`,
+        `Question mode: ${questionSettings.mode}`,
+        questionSettings.mode === "specific" && questionSettings.text
+          ? `Specific question: ${questionSettings.text}`
+          : "Specific question: The interviewer selected the question during the call.",
+        "",
+        "# Rubric Axes",
+        ...axes.map((axis) => `- ${axis.key}: ${axis.label}`),
+        "",
+        "# Grading Instructions",
+        "Score every listed axis from 0 to 5, using the exact axis keys and labels above.",
+        "Set overallScore from 0 to 100 and recommendation to one of: strong_no, lean_no, lean_yes, strong_yes.",
+        "Keep strengths and improvements concrete and action-oriented.",
+        "Use topicsToReview as lowercase hyphenated tags.",
+        "The generatedAt and evalModel fields may be empty; the server will stamp them.",
+        "",
+        "# Transcript",
+        "<transcript>",
+        transcript,
+        "</transcript>",
+      ].join("\n"),
+    },
+  ];
 }
 
 function buildQuestionSelectionInstructions(

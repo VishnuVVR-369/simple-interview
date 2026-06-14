@@ -52,13 +52,16 @@ export async function persistTranscript(
 ): Promise<void> {
   const jsonKey = `${session.transcriptKeyPrefix}.json`;
   const markdownKey = `${session.transcriptKeyPrefix}.md`;
+  const evaluationKey = session.evaluation
+    ? `${session.transcriptKeyPrefix}.evaluation.json`
+    : undefined;
   const persistedAt = new Date().toISOString();
   const body = buildJsonTranscript(session, persistedAt);
   const markdown = buildMarkdownTranscript(session, persistedAt);
   const s3 = getClient(config);
 
   try {
-    await Promise.all([
+    const writes = [
       s3.send(
         new PutObjectCommand({
           Bucket: config.r2Bucket,
@@ -75,11 +78,27 @@ export async function persistTranscript(
           ContentType: "text/markdown; charset=utf-8",
         }),
       ),
-    ]);
+    ];
+
+    if (evaluationKey && session.evaluation) {
+      writes.push(
+        s3.send(
+          new PutObjectCommand({
+            Bucket: config.r2Bucket,
+            Key: evaluationKey,
+            Body: JSON.stringify(session.evaluation, null, 2),
+            ContentType: "application/json; charset=utf-8",
+          }),
+        ),
+      );
+    }
+
+    await Promise.all(writes);
 
     session.storage = {
       jsonKey,
       markdownKey,
+      evaluationKey,
       lastPersistedAt: persistedAt,
     };
   } catch (error) {
@@ -87,6 +106,7 @@ export async function persistTranscript(
       ...session.storage,
       jsonKey,
       markdownKey,
+      evaluationKey,
       lastError: error instanceof Error ? error.message : String(error),
     };
     throw error;
@@ -269,6 +289,7 @@ function buildJsonTranscript(session: InterviewSession, persistedAt: string) {
     },
     orderedTurns: session.turns,
     rawTranscriptBearingEvents: session.rawTranscriptEvents,
+    evaluation: session.evaluation,
     storage: session.storage,
   };
 }
@@ -309,6 +330,63 @@ function buildMarkdownTranscript(
     lines.push("");
   }
 
+  if (session.evaluation) {
+    lines.push("## Evaluation");
+    lines.push("");
+    lines.push(`- Overall Score: ${session.evaluation.overallScore}/100`);
+    lines.push(
+      `- Recommendation: ${formatRecommendation(
+        session.evaluation.recommendation,
+      )}`,
+    );
+    lines.push(`- Generated: ${session.evaluation.generatedAt}`);
+    lines.push(`- Evaluation Model: ${session.evaluation.evalModel}`);
+    lines.push("");
+    lines.push("### Summary");
+    lines.push("");
+    lines.push(session.evaluation.summary);
+    lines.push("");
+    lines.push("### Rubric");
+    lines.push("");
+
+    for (const axis of session.evaluation.axes) {
+      lines.push(`- ${axis.label}: ${axis.score}/5 - ${axis.comment.trim()}`);
+    }
+
+    lines.push("");
+    lines.push("### Strengths");
+    lines.push("");
+
+    for (const strength of session.evaluation.strengths) {
+      lines.push(`- ${strength}`);
+    }
+
+    lines.push("");
+    lines.push("### Improvements");
+    lines.push("");
+
+    for (const improvement of session.evaluation.improvements) {
+      lines.push(`- ${improvement}`);
+    }
+
+    lines.push("");
+    lines.push("### Model Answer Outline");
+    lines.push("");
+    lines.push(session.evaluation.modelAnswerOutline);
+    lines.push("");
+
+    if (session.evaluation.topicsToReview.length > 0) {
+      lines.push("### Topics To Review");
+      lines.push("");
+
+      for (const topic of session.evaluation.topicsToReview) {
+        lines.push(`- ${topic}`);
+      }
+
+      lines.push("");
+    }
+  }
+
   lines.push("## Raw Transcript Event Count");
   lines.push("");
   lines.push(String(session.rawTranscriptEvents.length));
@@ -327,4 +405,11 @@ function roleLabel(role: string): string {
   }
 
   return "System";
+}
+
+function formatRecommendation(recommendation: string): string {
+  return recommendation
+    .split("_")
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
