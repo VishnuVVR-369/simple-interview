@@ -146,9 +146,11 @@ interface ProgressSummary {
   weakTopics: ProgressTopic[];
 }
 
+// Default to same-origin: requests hit /api/* on the web server, which Next.js
+// proxies to the Bun API (see next.config.js). This avoids CORS entirely.
+// Set NEXT_PUBLIC_API_BASE_URL only if you intentionally call the API cross-origin.
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
-  "http://localhost:8787";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 const interviewOptions: InterviewOption[] = [
   {
