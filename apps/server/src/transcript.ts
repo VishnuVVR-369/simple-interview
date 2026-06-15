@@ -29,6 +29,8 @@ export function toPublicSession(
     updatedAt: session.updatedAt,
     endedAt: session.endedAt,
     turns: session.turns,
+    workspace: session.workspace,
+    workspaceEvents: session.workspaceEvents,
     storage: session.storage,
     evaluation: session.evaluation,
   };

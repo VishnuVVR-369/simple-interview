@@ -9,6 +9,7 @@ import {
   INTERVIEW_TYPES,
   type InterviewType,
 } from "@repo/ai-config/prompts";
+import { renderWorkspaceForModel } from "@repo/ai-config/workspace";
 import type { AppConfig } from "./env";
 import type { InterviewSession } from "./types";
 
@@ -289,6 +290,8 @@ function buildJsonTranscript(session: InterviewSession, persistedAt: string) {
     },
     orderedTurns: session.turns,
     rawTranscriptBearingEvents: session.rawTranscriptEvents,
+    workspace: session.workspace,
+    workspaceEvents: session.workspaceEvents,
     evaluation: session.evaluation,
     storage: session.storage,
   };
@@ -327,6 +330,26 @@ function buildMarkdownTranscript(
     lines.push(`### ${turn.sequence}. ${roleLabel(turn.role)}`);
     lines.push("");
     lines.push(turn.text.trim() || "_Empty transcript text._");
+    lines.push("");
+  }
+
+  lines.push("## Workspace");
+  lines.push("");
+  lines.push("```text");
+  lines.push(renderWorkspaceForModel(session.workspace, session.type));
+  lines.push("```");
+  lines.push("");
+
+  if (session.workspaceEvents.length > 0) {
+    lines.push("## Workspace Event Timeline");
+    lines.push("");
+
+    for (const event of session.workspaceEvents) {
+      lines.push(
+        `- ${event.sequence}. ${event.type} at ${event.createdAt}: ${event.summary}`,
+      );
+    }
+
     lines.push("");
   }
 

@@ -6,6 +6,14 @@ import {
   type InterviewType,
   type QuestionSettings,
 } from "@repo/ai-config/prompts";
+import {
+  createInitialWorkspace,
+  normalizeWorkspace,
+  renderWorkspaceForModel,
+  summarizeWorkspace,
+  type InterviewWorkspace,
+  type WorkspaceSyncReason,
+} from "@repo/ai-config/workspace";
 import type { AppConfig } from "./env";
 import { generateEvaluation } from "./evaluation";
 import { persistTranscript } from "./storage";
@@ -93,6 +101,49 @@ export async function endInterviewSession(
   }
 }
 
+export function updateInterviewWorkspace(
+  session: InterviewSession,
+  workspace: unknown,
+  reason: WorkspaceSyncReason = "client_sync",
+): InterviewWorkspace {
+  const normalized = normalizeWorkspace(workspace, session.type);
+  const now = new Date().toISOString();
+  session.workspace = {
+    ...normalized,
+    updatedAt: now,
+  } as InterviewWorkspace;
+  session.updatedAt = now;
+  recordWorkspaceEvent(session, reason);
+
+  return session.workspace;
+}
+
+export function shareWorkspaceWithInterviewer(
+  session: InterviewSession,
+  reason = "The candidate shared their workspace with you.",
+): boolean {
+  const ws = session.sideband;
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return false;
+  }
+
+  recordWorkspaceEvent(session, "manual_share");
+  sendWorkspaceContextItem(session, reason);
+  ws.send(
+    JSON.stringify({
+      type: "response.create",
+      response: {
+        output_modalities: ["audio"],
+        instructions:
+          "Use the newly shared workspace context if it is relevant. Give concise interviewer feedback or ask the next focused question.",
+      },
+    }),
+  );
+
+  return true;
+}
+
 function createSession(
   callId: string,
   interviewType: InterviewType,
@@ -118,6 +169,9 @@ function createSession(
     sequence: 0,
     turns: [],
     rawTranscriptEvents: [],
+    workspace: createInitialWorkspace(interviewType),
+    workspaceEvents: [],
+    workspaceSequence: 0,
     partials: new Map(),
     storage: {},
   };
@@ -149,6 +203,7 @@ function connectSideband(session: InterviewSession, config: AppConfig): void {
     }
 
     const turn = ingestRealtimeEvent(session, event);
+    handleWorkspaceToolCalls(session, event, ws);
 
     if (turn) {
       session.status = "active";
@@ -179,6 +234,127 @@ function connectSideband(session: InterviewSession, config: AppConfig): void {
   });
 }
 
+function handleWorkspaceToolCalls(
+  session: InterviewSession,
+  event: unknown,
+  ws: WebSocket,
+): void {
+  if (!isRecord(event) || event.type !== "response.done") {
+    return;
+  }
+
+  const response = event.response;
+
+  if (!isRecord(response) || !Array.isArray(response.output)) {
+    return;
+  }
+
+  for (const output of response.output) {
+    if (
+      !isRecord(output) ||
+      output.type !== "function_call" ||
+      output.name !== "get_workspace_context" ||
+      typeof output.call_id !== "string"
+    ) {
+      continue;
+    }
+
+    recordWorkspaceEvent(session, "tool_read");
+
+    ws.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: output.call_id,
+          output: JSON.stringify({
+            ok: true,
+            focus: parseWorkspaceFocus(output.arguments),
+            context: renderWorkspaceForModel(session.workspace, session.type),
+          }),
+        },
+      }),
+    );
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          output_modalities: ["audio"],
+          instructions:
+            "Use the workspace context to continue the interview. Be concise and ask one focused follow-up.",
+        },
+      }),
+    );
+  }
+}
+
+function sendWorkspaceContextItem(
+  session: InterviewSession,
+  reason: string,
+): void {
+  const ws = session.sideband;
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  ws.send(
+    JSON.stringify({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: [
+              reason,
+              "",
+              renderWorkspaceForModel(session.workspace, session.type),
+            ].join("\n"),
+          },
+        ],
+      },
+    }),
+  );
+}
+
+function recordWorkspaceEvent(
+  session: InterviewSession,
+  reason: WorkspaceSyncReason,
+): void {
+  const now = new Date().toISOString();
+  session.workspaceSequence += 1;
+  session.workspaceEvents.push({
+    sequence: session.workspaceSequence,
+    type: reason,
+    summary: summarizeWorkspace(session.workspace, session.type),
+    createdAt: now,
+  });
+
+  if (session.workspaceEvents.length > 200) {
+    session.workspaceEvents.splice(0, session.workspaceEvents.length - 200);
+  }
+}
+
+function parseWorkspaceFocus(argumentsJson: unknown): string {
+  if (typeof argumentsJson !== "string") {
+    return "all";
+  }
+
+  try {
+    const parsed = JSON.parse(argumentsJson) as unknown;
+
+    if (isRecord(parsed) && typeof parsed.focus === "string") {
+      return parsed.focus;
+    }
+  } catch {
+    return "all";
+  }
+
+  return "all";
+}
+
 function extractCallId(location: string | null): string | undefined {
   if (!location) {
     return undefined;
@@ -198,4 +374,8 @@ function enqueuePersist(
 
   persistQueues.set(session.id, next);
   return next;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

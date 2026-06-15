@@ -1,4 +1,8 @@
 import type { InterviewType, QuestionSettings } from "@repo/ai-config/prompts";
+import type {
+  InterviewWorkspace,
+  WorkspaceTimelineEvent,
+} from "@repo/ai-config/workspace";
 
 export type TranscriptRole = "assistant" | "user" | "system";
 
@@ -69,6 +73,9 @@ export interface InterviewSession {
   sequence: number;
   turns: TranscriptTurn[];
   rawTranscriptEvents: RawTranscriptEvent[];
+  workspace: InterviewWorkspace;
+  workspaceEvents: WorkspaceTimelineEvent[];
+  workspaceSequence: number;
   partials: Map<string, string>;
   storage: StorageState;
   evaluation?: InterviewEvaluation;
@@ -88,6 +95,8 @@ export interface PublicInterviewSession {
   updatedAt: string;
   endedAt?: string;
   turns: TranscriptTurn[];
+  workspace: InterviewWorkspace;
+  workspaceEvents: WorkspaceTimelineEvent[];
   storage: StorageState;
   evaluation?: InterviewEvaluation;
 }

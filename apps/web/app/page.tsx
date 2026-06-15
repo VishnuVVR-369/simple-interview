@@ -7,8 +7,37 @@ import {
   type QuestionMode,
   type QuestionSettings,
 } from "@repo/ai-config/prompts";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  activeCodeFile,
+  createInitialWorkspace,
+  WORKSPACE_SYNC_DEBOUNCE_MS,
+  type CodeRunResult,
+  type CodeWorkspace,
+  type DiagramWorkspace,
+  type InterviewWorkspace,
+} from "@repo/ai-config/workspace";
+import { cpp } from "@codemirror/lang-cpp";
+import { javascript } from "@codemirror/lang-javascript";
+import { oneDark } from "@codemirror/theme-one-dark";
+import type {
+  AppState,
+  BinaryFiles,
+  ExcalidrawInitialDataState,
+} from "@excalidraw/excalidraw/types";
+import dynamic from "next/dynamic";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
+
+const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), {
+  ssr: false,
+});
+
+const ExcalidrawCanvas = dynamic(
+  () => import("@excalidraw/excalidraw").then((mod) => mod.Excalidraw),
+  {
+    ssr: false,
+  },
+);
 
 type Screen = "checking" | "login" | "home" | "starting" | "active" | "ended";
 type Role = "assistant" | "user";
@@ -54,6 +83,7 @@ interface EndResponse {
     lastError?: string;
   };
   evaluation?: InterviewEvaluation;
+  workspace?: InterviewWorkspace;
 }
 
 interface MarkdownTranscriptItem {
@@ -68,6 +98,7 @@ interface MarkdownTranscriptItem {
 }
 
 type MarkdownTranscriptGroups = Record<InterviewType, MarkdownTranscriptItem[]>;
+type WorkspaceSyncStatus = "idle" | "syncing" | "saved" | "error";
 
 interface MarkdownTranscriptListResponse {
   groups?: Partial<MarkdownTranscriptGroups>;
@@ -122,6 +153,13 @@ export default function Home() {
   const [isMuted, setIsMuted] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [workspace, setWorkspace] = useState<InterviewWorkspace | null>(null);
+  const [workspaceSyncStatus, setWorkspaceSyncStatus] =
+    useState<WorkspaceSyncStatus>("idle");
+  const [workspaceSyncError, setWorkspaceSyncError] = useState("");
+  const [lastWorkspaceSharedAt, setLastWorkspaceSharedAt] = useState("");
+  const [isSharingWorkspace, setIsSharingWorkspace] = useState(false);
+  const [isRunningCode, setIsRunningCode] = useState(false);
   const [storageKeys, setStorageKeys] = useState<EndResponse["storage"]>();
   const [evaluation, setEvaluation] = useState<InterviewEvaluation>();
   const [markdownGroups, setMarkdownGroups] =
@@ -143,6 +181,8 @@ export default function Home() {
   const endingRef = useRef(false);
   const finalizedRef = useRef(false);
   const endTimerRef = useRef<number | undefined>(undefined);
+  const workspaceSyncTimerRef = useRef<number | undefined>(undefined);
+  const latestWorkspaceRef = useRef<InterviewWorkspace | null>(null);
 
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const interviewerTileRef = useRef<HTMLDivElement | null>(null);
@@ -184,6 +224,31 @@ export default function Home() {
       element.scrollTop = element.scrollHeight;
     }
   }, [turns, livePartial]);
+
+  useEffect(() => {
+    latestWorkspaceRef.current = workspace;
+  }, [workspace]);
+
+  useEffect(() => {
+    if (!interviewId || screen !== "active" || !workspace) {
+      return;
+    }
+
+    if (workspaceSyncTimerRef.current) {
+      window.clearTimeout(workspaceSyncTimerRef.current);
+    }
+
+    workspaceSyncTimerRef.current = window.setTimeout(() => {
+      void syncWorkspace(workspace);
+    }, WORKSPACE_SYNC_DEBOUNCE_MS);
+
+    return () => {
+      if (workspaceSyncTimerRef.current) {
+        window.clearTimeout(workspaceSyncTimerRef.current);
+        workspaceSyncTimerRef.current = undefined;
+      }
+    };
+  }, [workspace, interviewId, screen]);
 
   async function checkSession() {
     try {
@@ -371,6 +436,10 @@ export default function Home() {
     setStorageKeys(undefined);
     setEvaluation(undefined);
     setActiveInterview(option);
+    setWorkspace(createInitialWorkspace(option.type));
+    setWorkspaceSyncStatus("idle");
+    setWorkspaceSyncError("");
+    setLastWorkspaceSharedAt("");
     setTurns([]);
     setLivePartial(null);
     setSeconds(0);
@@ -587,6 +656,165 @@ export default function Home() {
     setLivePartial(null);
   }
 
+  async function syncWorkspace(nextWorkspace: InterviewWorkspace) {
+    const id = interviewIdRef.current;
+
+    if (!id) {
+      return;
+    }
+
+    setWorkspaceSyncStatus("syncing");
+    setWorkspaceSyncError("");
+
+    try {
+      const response = await fetch(apiUrl(`/api/interviews/${id}/workspace`), {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace: nextWorkspace }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Workspace sync failed");
+      }
+
+      setWorkspaceSyncStatus("saved");
+    } catch (syncError) {
+      setWorkspaceSyncStatus("error");
+      setWorkspaceSyncError(
+        syncError instanceof Error
+          ? syncError.message
+          : "Workspace sync failed",
+      );
+    }
+  }
+
+  async function shareWorkspace() {
+    const id = interviewIdRef.current;
+    const currentWorkspace = latestWorkspaceRef.current;
+
+    if (!id || !currentWorkspace || isSharingWorkspace) {
+      return;
+    }
+
+    setIsSharingWorkspace(true);
+    setWorkspaceSyncError("");
+
+    try {
+      const response = await fetch(
+        apiUrl(`/api/interviews/${id}/workspace/share`),
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            workspace: currentWorkspace,
+            reason:
+              currentWorkspace.kind === "diagram"
+                ? "The candidate shared their current system design diagram."
+                : "The candidate shared their current code workspace.",
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error("Interviewer is not ready to receive the workspace");
+      }
+
+      setWorkspaceSyncStatus("saved");
+      setLastWorkspaceSharedAt(new Date().toISOString());
+      setStatus("Workspace shared");
+    } catch (shareError) {
+      setWorkspaceSyncStatus("error");
+      setWorkspaceSyncError(
+        shareError instanceof Error
+          ? shareError.message
+          : "Failed to share workspace",
+      );
+    } finally {
+      setIsSharingWorkspace(false);
+    }
+  }
+
+  function updateCodeContent(content: string) {
+    setWorkspace((current) => {
+      if (!current || current.kind !== "code") {
+        return current;
+      }
+
+      return updateCodeWorkspace(current, { content });
+    });
+  }
+
+  function updateCodeRunResult(runResult: CodeRunResult) {
+    setWorkspace((current) => {
+      if (!current || current.kind !== "code") {
+        return current;
+      }
+
+      return {
+        ...current,
+        runResult,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  function updateDiagramWorkspace(
+    elements: readonly unknown[],
+    appState: Record<string, unknown>,
+    files: Record<string, unknown>,
+  ) {
+    setWorkspace((current) => {
+      if (!current || current.kind !== "diagram") {
+        return current;
+      }
+
+      return {
+        ...current,
+        elements: [...elements],
+        appState: {
+          viewBackgroundColor:
+            typeof appState.viewBackgroundColor === "string"
+              ? appState.viewBackgroundColor
+              : current.appState.viewBackgroundColor,
+        },
+        files,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  async function runCodeWorkspace() {
+    const current = latestWorkspaceRef.current;
+
+    if (!current || current.kind !== "code" || isRunningCode) {
+      return;
+    }
+
+    const activeFile = activeCodeFile(current);
+
+    if (activeFile.language !== "javascript") {
+      updateCodeRunResult({
+        status: "idle",
+        output: "Local execution is only available for JavaScript workspaces.",
+        ranAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    setIsRunningCode(true);
+    updateCodeRunResult({
+      status: "running",
+      output: "Running...",
+      ranAt: new Date().toISOString(),
+    });
+
+    const result = await executeJavaScript(activeFile.content);
+    updateCodeRunResult(result);
+    setIsRunningCode(false);
+  }
+
   function toggleMute() {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
@@ -653,6 +881,7 @@ export default function Home() {
         const data = (await response.json()) as EndResponse;
         setStorageKeys(data.storage);
         setEvaluation(data.evaluation);
+        setWorkspace(data.workspace ?? latestWorkspaceRef.current);
       } catch {
         setError("Call ended, but transcript finalization failed.");
       }
@@ -665,6 +894,11 @@ export default function Home() {
 
   function cleanupCall() {
     stopVisualizer();
+
+    if (workspaceSyncTimerRef.current) {
+      window.clearTimeout(workspaceSyncTimerRef.current);
+      workspaceSyncTimerRef.current = undefined;
+    }
 
     dataChannelRef.current?.close();
     dataChannelRef.current = null;
@@ -688,6 +922,12 @@ export default function Home() {
     interviewIdRef.current = "";
     setTurns([]);
     setLivePartial(null);
+    setWorkspace(null);
+    setWorkspaceSyncStatus("idle");
+    setWorkspaceSyncError("");
+    setLastWorkspaceSharedAt("");
+    setIsSharingWorkspace(false);
+    setIsRunningCode(false);
     setStorageKeys(undefined);
     setEvaluation(undefined);
     setIsMuted(false);
@@ -1014,7 +1254,10 @@ export default function Home() {
               <span className={styles.phaseLabel}>{status}</span>
             </div>
 
-            <div className={styles.roomBody}>
+            <div
+              className={styles.roomBody}
+              data-workspace={workspace ? "true" : "false"}
+            >
               <div className={styles.tiles}>
                 <div
                   className={`${styles.tile} ${styles.tileInterviewer}`}
@@ -1097,6 +1340,21 @@ export default function Home() {
                   ) : null}
                 </div>
               </div>
+
+              {workspace ? (
+                <WorkspacePanel
+                  workspace={workspace}
+                  syncStatus={workspaceSyncStatus}
+                  syncError={workspaceSyncError}
+                  lastSharedAt={lastWorkspaceSharedAt}
+                  isSharing={isSharingWorkspace}
+                  isRunningCode={isRunningCode}
+                  onCodeChange={updateCodeContent}
+                  onDiagramChange={updateDiagramWorkspace}
+                  onRunCode={() => void runCodeWorkspace()}
+                  onShare={() => void shareWorkspace()}
+                />
+              ) : null}
             </div>
 
             <div className={styles.dock}>
@@ -1196,6 +1454,187 @@ export default function Home() {
         </audio>
       </section>
     </main>
+  );
+}
+
+function WorkspacePanel({
+  workspace,
+  syncStatus,
+  syncError,
+  lastSharedAt,
+  isSharing,
+  isRunningCode,
+  onCodeChange,
+  onDiagramChange,
+  onRunCode,
+  onShare,
+}: {
+  workspace: InterviewWorkspace;
+  syncStatus: WorkspaceSyncStatus;
+  syncError: string;
+  lastSharedAt: string;
+  isSharing: boolean;
+  isRunningCode: boolean;
+  onCodeChange: (content: string) => void;
+  onDiagramChange: (
+    elements: readonly unknown[],
+    appState: Record<string, unknown>,
+    files: Record<string, unknown>,
+  ) => void;
+  onRunCode: () => void;
+  onShare: () => void;
+}) {
+  const title = workspace.kind === "code" ? "Code workspace" : "Design board";
+  const activeFile =
+    workspace.kind === "code" ? activeCodeFile(workspace) : null;
+  const syncLabel =
+    syncStatus === "syncing"
+      ? "Syncing"
+      : syncStatus === "saved"
+        ? "Saved"
+        : syncStatus === "error"
+          ? "Sync issue"
+          : "Local";
+
+  return (
+    <section className={styles.workspacePanel}>
+      <div className={styles.workspaceHead}>
+        <div>
+          <span className={styles.fieldLabel}>{title}</span>
+          <h2>{workspace.kind === "code" ? activeFile?.name : "Excalidraw"}</h2>
+        </div>
+        <div className={styles.workspaceActions}>
+          {activeFile?.language === "javascript" ? (
+            <button
+              className={styles.secondaryButton}
+              disabled={isRunningCode}
+              onClick={onRunCode}
+              type="button"
+            >
+              {isRunningCode ? "Running" : "Run"}
+            </button>
+          ) : null}
+          <button
+            className={styles.secondaryButton}
+            disabled={isSharing}
+            onClick={onShare}
+            type="button"
+          >
+            {isSharing ? "Sharing" : "Share"}
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.workspaceMeta}>
+        <span data-state={syncStatus}>{syncLabel}</span>
+        {lastSharedAt ? (
+          <span>Shared {formatTimeAgo(lastSharedAt)}</span>
+        ) : null}
+        {syncError ? <span>{syncError}</span> : null}
+      </div>
+
+      {workspace.kind === "code" ? (
+        <CodeWorkspaceView
+          isRunningCode={isRunningCode}
+          onChange={onCodeChange}
+          workspace={workspace}
+        />
+      ) : (
+        <DiagramWorkspaceView
+          onChange={onDiagramChange}
+          workspace={workspace}
+        />
+      )}
+    </section>
+  );
+}
+
+function CodeWorkspaceView({
+  workspace,
+  isRunningCode,
+  onChange,
+}: {
+  workspace: CodeWorkspace;
+  isRunningCode: boolean;
+  onChange: (content: string) => void;
+}) {
+  const file = activeCodeFile(workspace);
+  const extensions = useMemo(
+    () => (file.language === "cpp" ? [cpp()] : [javascript({ jsx: true })]),
+    [file.language],
+  );
+
+  return (
+    <>
+      <div className={styles.editorWrap}>
+        <CodeMirror
+          basicSetup={{
+            autocompletion: true,
+            bracketMatching: true,
+            foldGutter: true,
+            highlightActiveLine: true,
+            lineNumbers: true,
+          }}
+          extensions={extensions}
+          height="100%"
+          onChange={onChange}
+          theme={oneDark}
+          value={file.content}
+        />
+      </div>
+      {file.language === "javascript" ? (
+        <div className={styles.runOutput}>
+          <div className={styles.runOutputHead}>
+            <span>Run output</span>
+            <span data-status={workspace.runResult.status}>
+              {isRunningCode ? "running" : workspace.runResult.status}
+            </span>
+          </div>
+          <pre>
+            {workspace.runResult.output || "Run the snippet to capture output."}
+          </pre>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function DiagramWorkspaceView({
+  workspace,
+  onChange,
+}: {
+  workspace: DiagramWorkspace;
+  onChange: (
+    elements: readonly unknown[],
+    appState: Record<string, unknown>,
+    files: Record<string, unknown>,
+  ) => void;
+}) {
+  const initialData = useMemo<ExcalidrawInitialDataState>(
+    () => ({
+      appState: workspace.appState as Partial<AppState>,
+      elements: workspace.elements as ExcalidrawInitialDataState["elements"],
+      files: workspace.files as BinaryFiles,
+    }),
+    // Excalidraw owns live scene updates after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  return (
+    <div className={styles.excalidrawWrap}>
+      <ExcalidrawCanvas
+        initialData={initialData}
+        onChange={(elements, appState, files) =>
+          onChange(
+            elements,
+            appState as unknown as Record<string, unknown>,
+            files as unknown as Record<string, unknown>,
+          )
+        }
+        theme="dark"
+      />
+    </div>
   );
 }
 
@@ -1760,6 +2199,130 @@ function formatTime(total: number): string {
   const minutes = Math.floor(total / 60);
   const secs = total % 60;
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function formatTimeAgo(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "recently";
+  }
+
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+
+  if (seconds < 5) {
+    return "just now";
+  }
+
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  return formatDateTime(value);
+}
+
+function updateCodeWorkspace(
+  workspace: CodeWorkspace,
+  update: { content: string },
+): CodeWorkspace {
+  const activeFile = activeCodeFile(workspace);
+
+  return {
+    ...workspace,
+    files: workspace.files.map((file) =>
+      file.id === activeFile.id ? { ...file, content: update.content } : file,
+    ),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function executeJavaScript(code: string): Promise<CodeRunResult> {
+  return new Promise((resolve) => {
+    const startedAt = new Date().toISOString();
+    const workerSource = `
+      const serialize = (value) => {
+        if (typeof value === "string") return value;
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch {
+          return String(value);
+        }
+      };
+
+      self.onmessage = async (event) => {
+        const logs = [];
+        const originalLog = console.log;
+        const originalError = console.error;
+        console.log = (...args) => logs.push(args.map(serialize).join(" "));
+        console.error = (...args) => logs.push(args.map(serialize).join(" "));
+
+        try {
+          const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+          const run = new AsyncFunction(event.data.code);
+          const result = await run();
+
+          if (result !== undefined) {
+            logs.push(serialize(result));
+          }
+
+          self.postMessage({
+            status: "passed",
+            output: logs.join("\\n") || "Completed without output."
+          });
+        } catch (error) {
+          self.postMessage({
+            status: "failed",
+            output: error && error.stack ? error.stack : String(error)
+          });
+        } finally {
+          console.log = originalLog;
+          console.error = originalError;
+        }
+      };
+    `;
+    const blob = new Blob([workerSource], { type: "application/javascript" });
+    const workerUrl = URL.createObjectURL(blob);
+    const worker = new Worker(workerUrl);
+    const timeout = window.setTimeout(() => {
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+      resolve({
+        status: "failed",
+        output: "Execution timed out after 2 seconds.",
+        ranAt: startedAt,
+      });
+    }, 2000);
+
+    worker.onmessage = (event: MessageEvent<CodeRunResult>) => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+      resolve({
+        status: event.data.status === "passed" ? "passed" : "failed",
+        output: event.data.output,
+        ranAt: startedAt,
+      });
+    };
+
+    worker.onerror = (event) => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+      URL.revokeObjectURL(workerUrl);
+      resolve({
+        status: "failed",
+        output: event.message,
+        ranAt: startedAt,
+      });
+    };
+
+    worker.postMessage({ code });
+  });
 }
 
 function formatRecommendation(recommendation: string): string {

@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./prompts": "./src/prompts.ts"
+    "./prompts": "./src/prompts.ts",
+    "./workspace": "./src/workspace.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

@@ -3,6 +3,7 @@ import {
   EVALUATION_JSON_SCHEMA,
   buildEvaluationMessages,
 } from "@repo/ai-config/prompts";
+import { renderWorkspaceForModel } from "@repo/ai-config/workspace";
 import type { AppConfig } from "./env";
 import type { InterviewEvaluation, InterviewSession } from "./types";
 
@@ -14,6 +15,10 @@ export async function generateEvaluation(
   config: AppConfig,
 ): Promise<InterviewEvaluation | undefined> {
   const transcript = renderTranscript(session);
+  const workspaceContext = renderWorkspaceForModel(
+    session.workspace,
+    session.type,
+  );
 
   if (
     session.turns.length < MIN_EVALUATION_TURNS ||
@@ -36,6 +41,7 @@ export async function generateEvaluation(
           session.type,
           session.question,
           transcript,
+          workspaceContext,
         ),
         response_format: {
           type: "json_schema",

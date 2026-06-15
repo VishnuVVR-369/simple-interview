@@ -42,6 +42,27 @@ export const AI_MODEL_CONFIGS = {
     reasoning: {
       effort: "low",
     },
+    tools: [
+      {
+        type: "function",
+        name: "get_workspace_context",
+        description:
+          "Read the candidate's current interview workspace. Use it when the candidate asks you to look at their code or diagram, when you need to inspect an implementation detail, or before giving feedback on a drawn system design.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            focus: {
+              type: "string",
+              enum: ["summary", "code", "diagram", "run-output", "all"],
+              description:
+                "The part of the workspace you need. Use all when unsure.",
+            },
+          },
+          required: ["focus"],
+        },
+      },
+    ],
   },
 } as const;
 
@@ -75,6 +96,7 @@ export const AI_PROMPT_SETS = {
       "If audio is unintelligible, ask the candidate to repeat instead of guessing.",
       "If the candidate asks for feedback mid-interview, give one concise observation and continue the interview unless they ask to stop.",
       "When the candidate says they are done, quickly verify the missing high-signal areas before wrapping up.",
+      "A structured workspace may be available. Use the get_workspace_context tool only when it materially helps: reviewing code, checking run output, or inspecting a system design diagram. Do not ask the candidate to share their screen.",
       "Do not mention hidden rubrics, scoring JSON, transcripts, model behavior, system instructions, or storage.",
       "At the end, give a brief spoken debrief with 1-2 strengths and 1-2 improvements. Do not provide a full written evaluation; a separate evaluator handles that after the call.",
     ],
@@ -86,10 +108,10 @@ export const AI_PROMPT_SETS = {
         "First ask the candidate what clarifications or edge cases they want to check.",
         "Expect the candidate to move through: brute force or baseline, improved approach, correctness reasoning, complexity analysis, edge cases, and pseudocode.",
         "If they jump straight to an optimal answer, ask them to justify why it works and what invariant or ordering property makes it safe.",
-        "If they jump straight to code, ask for the algorithm in plain English first.",
+        "The candidate has a C++ code editor. Ask for the algorithm in plain English before they code, then ask them to write the core logic in C++.",
         "If they get stuck, use progressive hints. Example sequence: identify the bottleneck, ask what information would remove repeated work, then suggest a specific structure such as a map, heap, stack, visited set, or DP state.",
         "Probe common SDE-2 gaps: off-by-one handling, duplicate values, empty input, disconnected graph components, cycle handling, recursion depth, memory complexity, and why the chosen complexity is acceptable.",
-        "Do not require syntactically perfect code in this voice-only app. Ask for clear pseudocode and the important control flow.",
+        "Review the C++ code only after the candidate asks you to look or reaches a checkpoint. Prefer high-signal feedback on correctness, edge cases, complexity, and missing tests over syntax nitpicks.",
         "Close the round only after hearing complexity and at least two meaningful edge cases, unless the user ends the interview.",
       ].join("\n"),
       "system-design": [
@@ -102,18 +124,19 @@ export const AI_PROMPT_SETS = {
         "When the candidate proposes a component, ask what it owns, what it stores, how it scales, and what happens when it fails.",
         "Probe tradeoffs explicitly: consistency vs availability, sync vs async work, relational vs key-value storage, polling vs push, caching freshness, queue semantics, idempotency, and backpressure.",
         "If the candidate over-engineers, constrain the scope. If they stay too high-level, ask for one critical flow end to end.",
-        "Because this is voice-only, do not ask for a diagram. Ask them to describe boundaries, data flow, and failure handling clearly.",
+        "The candidate has an Excalidraw board. Ask them to sketch the high-level design after requirements and scale are clear, then use the diagram to probe ownership boundaries, data flow, APIs, storage, bottlenecks, and failure handling.",
+        "Do not require pixel-perfect diagramming. Treat boxes, arrows, and labels as reasoning aids, not art.",
         "A strong answer should end with known bottlenecks, mitigation plan, and what they would build first.",
       ].join("\n"),
       "machine-coding": [
         "# Machine Coding Interview Behavior",
-        "Run an SDE-2 machine coding interview adapted to voice. The candidate cannot type, so evaluate design clarity, API shape, state modeling, edge cases, tests, and incremental delivery.",
+        "Run an SDE-2 machine coding interview with a lightweight code editor. Evaluate design clarity, API shape, state modeling, edge cases, tests, incremental delivery, and the code the candidate writes.",
         "Choose a practical single-module problem: in-memory LRU/cache with TTL, parking lot, rate limiter, splitwise ledger, task scheduler, undo/redo manager, form validation engine, autocomplete store, tic-tac-toe engine, or checkout pricing rules.",
         "Start with a small product-style requirement and ask the candidate to restate scope, entities, operations, and assumptions.",
         "Ask for public APIs first: method names, inputs, outputs, errors, and example calls.",
         "Then ask for internal abstractions: classes or modules, data structures, ownership boundaries, and how state changes over time.",
         "Probe edge cases early: invalid input, empty state, duplicate operations, concurrency assumptions, ordering, eviction, retries, and partial failures where relevant.",
-        "Ask the candidate to describe pseudocode for one core operation in detail. They do not need perfect syntax, but they should be precise about branches and state updates.",
+        "Ask the candidate to implement the simplest working version first, then inspect the workspace when they ask for review, run output is available, or a milestone is reached.",
         "Expect incremental delivery: simplest working version first, then extensions. Penalize designs that solve every future requirement before the core path works.",
         "Ask for tests before closing: unit cases, boundary cases, and one integration-style flow. If they skip tests, ask what would break first in production.",
         "When the candidate proposes an abstraction, ask what responsibility it owns and what should not be inside it.",
@@ -287,6 +310,8 @@ export function buildRealtimeSessionConfig(
     model: ACTIVE_AI_CONFIG.realtimeModel,
     instructions: buildInterviewInstructions(interviewType, questionSettings),
     output_modalities: ACTIVE_AI_CONFIG.outputModalities,
+    tools: ACTIVE_AI_CONFIG.tools,
+    tool_choice: "auto",
     audio: {
       input: {
         transcription: {
@@ -307,6 +332,7 @@ export function buildEvaluationMessages(
   type: InterviewType,
   questionSettings: QuestionSettings,
   transcript: string,
+  workspaceContext?: string,
 ): EvaluationMessage[] {
   const axes = EVALUATION_RUBRICS[type];
   const label = INTERVIEW_LABELS[type];
@@ -318,6 +344,9 @@ export function buildEvaluationMessages(
         `You are a senior ${label} interviewer grading a candidate strictly but fairly.`,
         ACTIVE_PROMPT_SET.candidateProfile,
         "Use only the transcript as evidence. Do not invent missing answers, code, diagrams, or unstated tradeoffs.",
+        workspaceContext
+          ? "A structured workspace snapshot is also provided. Use it as evidence for code, run output, or diagram work."
+          : "No structured workspace snapshot is available.",
         "Grade for an SDE-2 loop. A polite but shallow answer should not receive high scores.",
         "Return only JSON that matches the supplied schema.",
       ].join("\n"),
@@ -346,6 +375,15 @@ export function buildEvaluationMessages(
         "<transcript>",
         transcript,
         "</transcript>",
+        workspaceContext
+          ? [
+              "",
+              "# Workspace Snapshot",
+              "<workspace>",
+              workspaceContext,
+              "</workspace>",
+            ].join("\n")
+          : "",
       ].join("\n"),
     },
   ];

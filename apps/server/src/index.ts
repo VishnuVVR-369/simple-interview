@@ -18,6 +18,8 @@ import {
   createRealtimeInterview,
   endInterviewSession,
   getInterviewSession,
+  shareWorkspaceWithInterviewer,
+  updateInterviewWorkspace,
 } from "./realtime";
 import { getMarkdownTranscript, listMarkdownTranscripts } from "./storage";
 import { toPublicSession } from "./transcript";
@@ -233,6 +235,85 @@ async function route(
     }
 
     return json(request, toPublicSession(session), undefined, appConfig);
+  }
+
+  const workspaceMatch = url.pathname.match(
+    /^\/api\/interviews\/([^/]+)\/workspace$/,
+  );
+
+  if (workspaceMatch?.[1] && request.method === "POST") {
+    const session = getInterviewSession(workspaceMatch[1]);
+
+    if (!session) {
+      return json(
+        request,
+        { error: "Interview not found" },
+        { status: 404 },
+        appConfig,
+      );
+    }
+
+    const body = await parseJsonBody<{ workspace?: unknown }>(request);
+    const workspace = updateInterviewWorkspace(
+      session,
+      body.workspace,
+      "client_sync",
+    );
+
+    return json(
+      request,
+      {
+        ok: true,
+        workspace,
+        workspaceEvents: session.workspaceEvents,
+      },
+      undefined,
+      appConfig,
+    );
+  }
+
+  const workspaceShareMatch = url.pathname.match(
+    /^\/api\/interviews\/([^/]+)\/workspace\/share$/,
+  );
+
+  if (workspaceShareMatch?.[1] && request.method === "POST") {
+    const session = getInterviewSession(workspaceShareMatch[1]);
+
+    if (!session) {
+      return json(
+        request,
+        { error: "Interview not found" },
+        { status: 404 },
+        appConfig,
+      );
+    }
+
+    const body = await parseJsonBody<{
+      workspace?: unknown;
+      reason?: unknown;
+    }>(request);
+
+    if (body.workspace) {
+      updateInterviewWorkspace(session, body.workspace, "client_sync");
+    }
+
+    const shared = shareWorkspaceWithInterviewer(
+      session,
+      typeof body.reason === "string"
+        ? body.reason
+        : "The candidate shared their current workspace with you.",
+    );
+
+    return json(
+      request,
+      {
+        ok: shared,
+        workspace: session.workspace,
+        workspaceEvents: session.workspaceEvents,
+      },
+      shared ? undefined : { status: 409 },
+      appConfig,
+    );
   }
 
   const endMatch = url.pathname.match(/^\/api\/interviews\/([^/]+)\/end$/);
