@@ -13,6 +13,7 @@
     "R2_ACCOUNT_ID",
     "R2_BUCKET",
     "R2_SECRET_ACCESS_KEY",
+    "SERVER_ORIGIN",
     "WEB_ORIGIN"
   ],
   "tasks": {

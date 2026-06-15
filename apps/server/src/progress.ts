@@ -222,9 +222,7 @@ function summarizeType(
   };
 }
 
-function computeAxisAverages(
-  records: ProgressRecord[],
-): ProgressAxisAverage[] {
+function computeAxisAverages(records: ProgressRecord[]): ProgressAxisAverage[] {
   const totals = new Map<string, { sum: number; count: number }>();
 
   for (const record of records) {
@@ -248,7 +246,11 @@ function computeAxisAverages(
 
   for (const [key, entry] of totals) {
     if (!AXIS_LABELS.has(key) && entry.count > 0) {
-      averages.push({ key, label: key, average: round1(entry.sum / entry.count) });
+      averages.push({
+        key,
+        label: key,
+        average: round1(entry.sum / entry.count),
+      });
     }
   }
 
@@ -308,7 +310,8 @@ function normalizeProgressRecord(value: unknown): ProgressRecord | undefined {
   return {
     callId: typeof value.callId === "string" ? value.callId : "",
     type,
-    label: typeof value.label === "string" ? value.label : INTERVIEW_LABELS[type],
+    label:
+      typeof value.label === "string" ? value.label : INTERVIEW_LABELS[type],
     date: typeof value.date === "string" ? value.date : "",
     durationSeconds:
       typeof value.durationSeconds === "number" ? value.durationSeconds : 0,

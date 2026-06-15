@@ -409,7 +409,7 @@ function initialCodeForInterview(type: InterviewType): string {
       "  vector<int> result = solution.solve(nums);",
       "",
       "  for (int value : result) {",
-      "    cout << value << \" \";",
+      '    cout << value << " ";',
       "  }",
       "  cout << '\\n';",
       "  return 0;",
