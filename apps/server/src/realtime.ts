@@ -16,6 +16,7 @@ import {
 } from "@repo/ai-config/workspace";
 import type { AppConfig } from "./env";
 import { generateEvaluation } from "./evaluation";
+import { writeProgressRecord } from "./progress";
 import { persistTranscript } from "./storage";
 import { ingestRealtimeEvent } from "./transcript";
 import type { InterviewSession } from "./types";
@@ -98,6 +99,9 @@ export async function endInterviewSession(
 
   if (session.evaluation) {
     await enqueuePersist(session, config);
+    await writeProgressRecord(session, config).catch((error) => {
+      console.error("Failed to write progress record", error);
+    });
   }
 }
 

@@ -47,6 +47,10 @@ function getClient(config: AppConfig): S3Client {
   return client;
 }
 
+export function getR2Client(config: AppConfig): S3Client {
+  return getClient(config);
+}
+
 export async function persistTranscript(
   session: InterviewSession,
   config: AppConfig,

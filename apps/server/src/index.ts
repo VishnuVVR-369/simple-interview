@@ -21,6 +21,7 @@ import {
   shareWorkspaceWithInterviewer,
   updateInterviewWorkspace,
 } from "./realtime";
+import { getProgressSummary } from "./progress";
 import { getMarkdownTranscript, listMarkdownTranscripts } from "./storage";
 import { toPublicSession } from "./transcript";
 
@@ -158,6 +159,15 @@ async function route(
     return json(
       request,
       await listMarkdownTranscripts(appConfig),
+      undefined,
+      appConfig,
+    );
+  }
+
+  if (url.pathname === "/api/progress" && request.method === "GET") {
+    return json(
+      request,
+      await getProgressSummary(appConfig),
       undefined,
       appConfig,
     );

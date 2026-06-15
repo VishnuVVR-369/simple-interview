@@ -110,6 +110,42 @@ interface MarkdownTranscriptResponse {
   markdown: string;
 }
 
+interface ProgressTypeSummary {
+  type: InterviewType;
+  label: string;
+  count: number;
+  averageScore: number;
+  bestScore: number;
+  latestScore: number;
+}
+
+interface ProgressTrendPoint {
+  date: string;
+  callId: string;
+  type: InterviewType;
+  overallScore: number;
+}
+
+interface ProgressAxisAverage {
+  key: string;
+  label: string;
+  average: number;
+}
+
+interface ProgressTopic {
+  topic: string;
+  count: number;
+}
+
+interface ProgressSummary {
+  totalInterviews: number;
+  averageScore: number;
+  byType: ProgressTypeSummary[];
+  trend: ProgressTrendPoint[];
+  axisAverages: ProgressAxisAverage[];
+  weakTopics: ProgressTopic[];
+}
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   "http://localhost:8787";
@@ -171,6 +207,9 @@ export default function Home() {
   const [isLoadingMarkdownList, setIsLoadingMarkdownList] = useState(false);
   const [isLoadingMarkdown, setIsLoadingMarkdown] = useState(false);
   const [markdownError, setMarkdownError] = useState("");
+  const [progress, setProgress] = useState<ProgressSummary | null>(null);
+  const [isLoadingProgress, setIsLoadingProgress] = useState(false);
+  const [progressError, setProgressError] = useState("");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -261,6 +300,7 @@ export default function Home() {
         setScreen("home");
         setStatus("Ready when you are");
         void loadMarkdownTranscripts();
+        void loadProgress();
       } else {
         setScreen("login");
         setStatus("Login required");
@@ -293,6 +333,7 @@ export default function Home() {
     setScreen("home");
     setStatus("Ready when you are");
     void loadMarkdownTranscripts();
+    void loadProgress();
   }
 
   async function logout() {
@@ -350,6 +391,37 @@ export default function Home() {
       );
     } finally {
       setIsLoadingMarkdownList(false);
+    }
+  }
+
+  async function loadProgress() {
+    setIsLoadingProgress(true);
+    setProgressError("");
+
+    try {
+      const response = await fetch(apiUrl("/api/progress"), {
+        credentials: "include",
+      });
+
+      if (response.status === 401) {
+        setScreen("login");
+        setStatus("Login required");
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error("Failed to load progress");
+      }
+
+      setProgress((await response.json()) as ProgressSummary);
+    } catch (loadError) {
+      setProgressError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load progress",
+      );
+    } finally {
+      setIsLoadingProgress(false);
     }
   }
 
@@ -1221,6 +1293,12 @@ export default function Home() {
                 </button>
               </section>
             ) : null}
+            <ProgressDashboard
+              progress={progress}
+              error={progressError}
+              isLoading={isLoadingProgress}
+              onRefresh={() => void loadProgress()}
+            />
             <TranscriptLibrary
               groups={markdownGroups}
               total={markdownTotal}
@@ -1441,6 +1519,7 @@ export default function Home() {
                 setScreen("home");
                 setStatus("Ready when you are");
                 void loadMarkdownTranscripts();
+                void loadProgress();
               }}
               type="button"
             >
@@ -1735,6 +1814,222 @@ function TranscriptLine({
         {isLive ? <span className={styles.caret} /> : null}
       </p>
     </article>
+  );
+}
+
+function ProgressDashboard({
+  progress,
+  error,
+  isLoading,
+  onRefresh,
+}: {
+  progress: ProgressSummary | null;
+  error: string;
+  isLoading: boolean;
+  onRefresh: () => void;
+}) {
+  const hasData = Boolean(progress && progress.totalInterviews > 0);
+
+  return (
+    <section className={styles.progress}>
+      <div className={styles.progressHead}>
+        <div>
+          <p className={styles.eyebrow}>Your progress</p>
+          <h2>Progress over time</h2>
+        </div>
+        <button
+          className={styles.progressRefresh}
+          disabled={isLoading}
+          onClick={onRefresh}
+          type="button"
+        >
+          {isLoading ? "Refreshing" : "Refresh"}
+        </button>
+      </div>
+
+      {error ? <p className={styles.error}>{error}</p> : null}
+
+      {!hasData && !isLoading ? (
+        <p className={styles.progressEmpty}>
+          Finish a scored interview to start tracking your progress. Each graded
+          session adds a point here.
+        </p>
+      ) : null}
+
+      {hasData && progress ? (
+        <div className={styles.progressBody}>
+          <div className={styles.progressStats}>
+            <div className={styles.progressStat}>
+              <span className={styles.progressStatNum}>
+                {progress.totalInterviews}
+              </span>
+              <span className={styles.progressStatLabel}>Interviews scored</span>
+            </div>
+            <div className={styles.progressStat}>
+              <span className={styles.progressStatNum}>
+                {progress.averageScore}
+                <span className={styles.progressStatUnit}>/100</span>
+              </span>
+              <span className={styles.progressStatLabel}>Average score</span>
+            </div>
+            <div className={styles.progressStat}>
+              <span className={styles.progressStatNum}>
+                {progress.byType.length}
+              </span>
+              <span className={styles.progressStatLabel}>Tracks practiced</span>
+            </div>
+          </div>
+
+          {progress.trend.length > 0 ? (
+            <div className={styles.progressCard}>
+              <div className={styles.progressCardHead}>
+                <span>Score trend</span>
+                <span>{progress.trend.length} sessions</span>
+              </div>
+              <Sparkline points={progress.trend} />
+            </div>
+          ) : null}
+
+          {progress.byType.length > 0 ? (
+            <div className={styles.typeGrid}>
+              {progress.byType.map((summary) => (
+                <div className={styles.typeCard} key={summary.type}>
+                  <div className={styles.typeCardHead}>
+                    <span>{summary.label}</span>
+                    <span>{summary.count}</span>
+                  </div>
+                  <div className={styles.typeStatRow}>
+                    <div>
+                      <span className={styles.typeStatNum}>
+                        {summary.averageScore}
+                      </span>
+                      <span className={styles.typeStatLabel}>Avg</span>
+                    </div>
+                    <div>
+                      <span className={styles.typeStatNum}>
+                        {summary.bestScore}
+                      </span>
+                      <span className={styles.typeStatLabel}>Best</span>
+                    </div>
+                    <div>
+                      <span className={styles.typeStatNum}>
+                        {summary.latestScore}
+                      </span>
+                      <span className={styles.typeStatLabel}>Latest</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {progress.axisAverages.length > 0 ? (
+            <div className={styles.progressCard}>
+              <div className={styles.progressCardHead}>
+                <span>Skill averages</span>
+                <span>out of 5</span>
+              </div>
+              <div className={styles.axisList}>
+                {progress.axisAverages.map((axis) => (
+                  <div className={styles.axisRow} key={axis.key}>
+                    <div className={styles.axisHead}>
+                      <span>{axis.label}</span>
+                      <span>{axis.average.toFixed(1)}/5</span>
+                    </div>
+                    <div className={styles.axisTrack} aria-hidden>
+                      <span
+                        style={{
+                          width: `${Math.max(
+                            0,
+                            Math.min(100, (axis.average / 5) * 100),
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {progress.weakTopics.length > 0 ? (
+            <div className={styles.progressCard}>
+              <div className={styles.progressCardHead}>
+                <span>Topics to review</span>
+                <span>most frequent</span>
+              </div>
+              <div className={styles.topicList}>
+                {progress.weakTopics.map((topic) => (
+                  <span key={topic.topic}>
+                    {topic.topic}
+                    {topic.count > 1 ? ` ×${topic.count}` : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function Sparkline({ points }: { points: ProgressTrendPoint[] }) {
+  const width = 560;
+  const height = 96;
+  const padding = 10;
+  const usableW = width - padding * 2;
+  const usableH = height - padding * 2;
+
+  const toX = (index: number) =>
+    points.length > 1
+      ? padding + (index / (points.length - 1)) * usableW
+      : width / 2;
+  const toY = (score: number) =>
+    padding + (1 - Math.max(0, Math.min(1, score / 100))) * usableH;
+
+  const linePoints = points
+    .map((point, index) => `${toX(index)},${toY(point.overallScore)}`)
+    .join(" ");
+  const latest = points[points.length - 1]!;
+
+  return (
+    <div className={styles.sparkline}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className={styles.sparklineSvg}
+        role="img"
+        aria-label="Interview score trend"
+      >
+        <line
+          x1={padding}
+          y1={toY(50)}
+          x2={width - padding}
+          y2={toY(50)}
+          className={styles.sparklineMid}
+        />
+        {points.length > 1 ? (
+          <polyline points={linePoints} className={styles.sparklineLine} />
+        ) : null}
+        {points.map((point, index) => (
+          <circle
+            key={`${point.callId}-${index}`}
+            cx={toX(index)}
+            cy={toY(point.overallScore)}
+            r={index === points.length - 1 ? 5 : 3}
+            className={
+              index === points.length - 1
+                ? styles.sparklineDotLast
+                : styles.sparklineDot
+            }
+          />
+        ))}
+      </svg>
+      <div className={styles.sparklineMeta}>
+        <span>Latest {latest.overallScore}/100</span>
+        <span>{formatDateTime(latest.date)}</span>
+      </div>
+    </div>
   );
 }
 
