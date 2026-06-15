@@ -22,7 +22,11 @@ import {
   updateInterviewWorkspace,
 } from "./realtime";
 import { getProgressSummary } from "./progress";
-import { getMarkdownTranscript, listMarkdownTranscripts } from "./storage";
+import {
+  deleteMarkdownTranscript,
+  getMarkdownTranscript,
+  listMarkdownTranscripts,
+} from "./storage";
 import { toPublicSession } from "./transcript";
 
 const config = loadConfig();
@@ -162,6 +166,45 @@ async function route(
       undefined,
       appConfig,
     );
+  }
+
+  if (
+    url.pathname === "/api/transcripts/markdown" &&
+    request.method === "DELETE"
+  ) {
+    const key = url.searchParams.get("key");
+
+    if (!key) {
+      return json(
+        request,
+        { error: "Missing transcript key" },
+        { status: 400 },
+        appConfig,
+      );
+    }
+
+    try {
+      return json(
+        request,
+        { ok: true, ...(await deleteMarkdownTranscript(key, appConfig)) },
+        undefined,
+        appConfig,
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Invalid markdown transcript key"
+      ) {
+        return json(
+          request,
+          { error: error.message },
+          { status: 400 },
+          appConfig,
+        );
+      }
+
+      throw error;
+    }
   }
 
   if (url.pathname === "/api/progress" && request.method === "GET") {
@@ -438,7 +481,7 @@ function withCors(
     headers.set("Vary", "Origin");
   }
 
-  headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  headers.set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   headers.set(
     "Access-Control-Allow-Headers",
     "Content-Type,Accept,X-Question-Mode,X-Custom-Question",

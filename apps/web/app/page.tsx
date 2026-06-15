@@ -206,6 +206,7 @@ export default function Home() {
   const [selectedMarkdown, setSelectedMarkdown] = useState("");
   const [isLoadingMarkdownList, setIsLoadingMarkdownList] = useState(false);
   const [isLoadingMarkdown, setIsLoadingMarkdown] = useState(false);
+  const [isDeletingMarkdown, setIsDeletingMarkdown] = useState(false);
   const [markdownError, setMarkdownError] = useState("");
   const [progress, setProgress] = useState<ProgressSummary | null>(null);
   const [isLoadingProgress, setIsLoadingProgress] = useState(false);
@@ -457,6 +458,52 @@ export default function Home() {
       );
     } finally {
       setIsLoadingMarkdown(false);
+    }
+  }
+
+  async function deleteMarkdownTranscript(item: MarkdownTranscriptItem) {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        "Delete this interview? Its Markdown and JSON files will be permanently removed from R2.",
+      )
+    ) {
+      return;
+    }
+
+    setIsDeletingMarkdown(true);
+    setMarkdownError("");
+
+    try {
+      const response = await fetch(
+        apiUrl(`/api/transcripts/markdown?key=${encodeURIComponent(item.key)}`),
+        { method: "DELETE", credentials: "include" },
+      );
+
+      if (response.status === 401) {
+        setScreen("login");
+        setStatus("Login required");
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error("Failed to delete transcript");
+      }
+
+      if (selectedMarkdownItem?.key === item.key) {
+        setSelectedMarkdownItem(null);
+        setSelectedMarkdown("");
+      }
+
+      await loadMarkdownTranscripts();
+    } catch (deleteError) {
+      setMarkdownError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Failed to delete transcript",
+      );
+    } finally {
+      setIsDeletingMarkdown(false);
     }
   }
 
@@ -1307,8 +1354,10 @@ export default function Home() {
               error={markdownError}
               isLoadingList={isLoadingMarkdownList}
               isLoadingMarkdown={isLoadingMarkdown}
+              isDeleting={isDeletingMarkdown}
               onRefresh={() => void loadMarkdownTranscripts()}
               onSelect={(item) => void openMarkdownTranscript(item)}
+              onDelete={(item) => void deleteMarkdownTranscript(item)}
             />
           </>
         ) : null}
@@ -1863,7 +1912,9 @@ function ProgressDashboard({
               <span className={styles.progressStatNum}>
                 {progress.totalInterviews}
               </span>
-              <span className={styles.progressStatLabel}>Interviews scored</span>
+              <span className={styles.progressStatLabel}>
+                Interviews scored
+              </span>
             </div>
             <div className={styles.progressStat}>
               <span className={styles.progressStatNum}>
@@ -2041,8 +2092,10 @@ function TranscriptLibrary({
   error,
   isLoadingList,
   isLoadingMarkdown,
+  isDeleting,
   onRefresh,
   onSelect,
+  onDelete,
 }: {
   groups: MarkdownTranscriptGroups;
   total: number;
@@ -2051,8 +2104,10 @@ function TranscriptLibrary({
   error: string;
   isLoadingList: boolean;
   isLoadingMarkdown: boolean;
+  isDeleting: boolean;
   onRefresh: () => void;
   onSelect: (item: MarkdownTranscriptItem) => void;
+  onDelete: (item: MarkdownTranscriptItem) => void;
 }) {
   const hasTranscripts = total > 0;
 
@@ -2134,6 +2189,14 @@ function TranscriptLibrary({
                   </p>
                   <p className={styles.markdownFileKey}>{selectedItem.key}</p>
                 </div>
+                <button
+                  className={styles.transcriptDelete}
+                  disabled={isDeleting}
+                  onClick={() => onDelete(selectedItem)}
+                  type="button"
+                >
+                  {isDeleting ? "Deleting" : "Delete"}
+                </button>
               </div>
             ) : null}
 

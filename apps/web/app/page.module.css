@@ -746,9 +746,43 @@
 }
 
 .markdownPaneHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.18);
+}
+
+.transcriptDelete {
+  flex-shrink: 0;
+  appearance: none;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(224, 121, 95, 0.32);
+  background: rgba(224, 121, 95, 0.08);
+  color: var(--danger);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 0.2s var(--ease),
+    background 0.2s var(--ease),
+    color 0.2s var(--ease);
+}
+
+.transcriptDelete:hover {
+  border-color: rgba(224, 121, 95, 0.6);
+  background: rgba(224, 121, 95, 0.16);
+  color: #f0a890;
+}
+
+.transcriptDelete:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .markdownFileName {

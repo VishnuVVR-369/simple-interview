@@ -1,4 +1,5 @@
 import {
+  DeleteObjectsCommand,
   GetObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
@@ -180,6 +181,31 @@ export async function getMarkdownTranscript(
     key,
     markdown: response.Body ? await response.Body.transformToString() : "",
   };
+}
+
+export async function deleteMarkdownTranscript(
+  key: string,
+  config: AppConfig,
+): Promise<{ key: string; deleted: string[] }> {
+  if (!isSafeMarkdownTranscriptKey(key)) {
+    throw new Error("Invalid markdown transcript key");
+  }
+
+  const prefix = key.slice(0, -".md".length);
+  const keys = [`${prefix}.md`, `${prefix}.json`, `${prefix}.evaluation.json`];
+
+  const s3 = getClient(config);
+  await s3.send(
+    new DeleteObjectsCommand({
+      Bucket: config.r2Bucket,
+      Delete: {
+        Objects: keys.map((Key) => ({ Key })),
+        Quiet: true,
+      },
+    }),
+  );
+
+  return { key, deleted: keys };
 }
 
 function emptyTranscriptGroups(): MarkdownTranscriptGroups {
